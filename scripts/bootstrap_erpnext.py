@@ -88,22 +88,27 @@ def ensure_item(erp: ERP) -> None:
     else:
         print(f"  item: {ITEM_CODE!r} exists")
 
+    # ERPNext auto-creates an item_defaults row (company + default_warehouse) on
+    # insert; ensure that row also carries the expense account and buying cost
+    # centre the buying chain needs. Idempotent: only writes when a field differs.
     item = erp.get("Item", ITEM_CODE)
-    has_default = any(d.get("company") == COMPANY for d in item.get("item_defaults", []))
-    if not has_default:
-        defaults = item.get("item_defaults", [])
-        defaults.append(
-            {
-                "company": COMPANY,
-                "default_warehouse": WAREHOUSE,
-                "expense_account": EXPENSE_ACCOUNT,
-                "buying_cost_center": COST_CENTER,
-            }
-        )
+    defaults = item.get("item_defaults", [])
+    row = next((d for d in defaults if d.get("company") == COMPANY), None)
+    if row is None:
+        row = {"company": COMPANY}
+        defaults.append(row)
+
+    wanted = {
+        "default_warehouse": WAREHOUSE,
+        "expense_account": EXPENSE_ACCOUNT,
+        "buying_cost_center": COST_CENTER,
+    }
+    if any(row.get(k) != v for k, v in wanted.items()):
+        row.update(wanted)
         erp.update("Item", ITEM_CODE, {"item_defaults": defaults})
-        print(f"  item: added company defaults (wh={WAREHOUSE}, exp={EXPENSE_ACCOUNT})")
+        print(f"  item: set company defaults (wh={WAREHOUSE}, exp={EXPENSE_ACCOUNT})")
     else:
-        print("  item: company defaults present")
+        print("  item: company defaults already complete")
 
 
 def main() -> int:
