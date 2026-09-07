@@ -37,6 +37,14 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
 
+# `trace/` is mandated by PRD §11 and shadows the stdlib `trace` module. It
+# resolves correctly (repo root precedes the stdlib on sys.path) but isort would
+# otherwise file it under stdlib. Recorded in docs/limitations.md.
+[tool.ruff.lint.isort]
+known-first-party = [
+    "agent", "bench", "data", "erp", "harness", "orchestrator", "trace", "ui", "verify",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -20,8 +20,8 @@ the real ledger is a real duplicate invoice. See [`docs/limitations.md`](docs/li
 
 | Phase | State |
 |---|---|
-| **1 · Real environment foundation** | in progress |
-| 2 · Baseline agent (no verifier) | not started |
+| 1 · Real environment foundation | complete |
+| **2 · Baseline agent (no verifier)** | happy path complete; baseline corpus deferred to Phase 4 |
 | 3 · Verification gate | not started |
 | 4 · Fault-injection benchmark | not started |
 | 5 · Trace explorer | not started |
@@ -42,11 +42,26 @@ bash scripts/wait_for_erpnext.sh
 cp .env.example .env
 uv run python scripts/bootstrap_erpnext.py         # company, fiscal year, CoA, warehouse, cost center, supplier, item
 uv run python scripts/generate_scoped_api_key.py   # scoped agent user (NOT System Manager) -> writes key/secret to .env
-uv run python scripts/handrun_buying_chain.py      # Material Request -> PO -> Receipt -> Invoice -> Payment, all submitted; prints the GL entries moved
+uv run python scripts/setup_agent_erp.py          # idempotency-key custom field on the buying chain
+uv run python scripts/apply_schema.py             # agent state tables in Postgres
+
+uv run python scripts/handrun_buying_chain.py     # un-agented control: the chain driven by hand
+uv run python scripts/run_workflow.py --workflow-id wf-001 --show-trace   # the baseline agent
+```
+
+The agent needs a local model. Install [Ollama](https://ollama.com), start it,
+and pull the executor model:
+
+```bash
+ollama pull llama3:8b-instruct-q4_K_M    # or set OLLAMA_MODEL
 ```
 
 `scripts/handrun_buying_chain.py` is the Phase 1 success check: one command
 produces a full S1–S6 document chain and prints the resulting GL entries.
+`scripts/run_workflow.py` is the Phase 2 equivalent, driven by the agent — every
+action from a real model call, every write idempotent, state checkpointed before
+each side effect. Re-running the same `--workflow-id` resumes it and posts
+nothing new.
 
 ## Repo layout
 

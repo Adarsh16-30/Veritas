@@ -16,8 +16,15 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
-from _erpclient import ERP, ERPError
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from dotenv import load_dotenv  # noqa: E402
+
+from erp.client import ERPClient, ERPError  # noqa: E402
+
+load_dotenv()
 
 COMPANY = os.environ.get("VERITAS_COMPANY", "Veritas Test Co")
 ABBR = os.environ.get("VERITAS_ABBR", "VTC")
@@ -33,12 +40,12 @@ EXPENSE_ACCOUNT = f"Cost of Goods Sold - {ABBR}"
 COST_CENTER = f"Main - {ABBR}"
 
 
-def ensure_setup_complete(erp: ERP) -> None:
+def ensure_setup_complete(erp: ERPClient) -> None:
     if erp.exists("Company", [["name", "=", COMPANY]]):
         print(f"  setup: Company {COMPANY!r} already exists — skipping wizard")
         return
     print("  setup: running setup wizard ...")
-    erp.method(
+    erp.call(
         "frappe.desk.page.setup_wizard.setup_wizard.setup_complete",
         args={
             "language": "English",
@@ -56,7 +63,7 @@ def ensure_setup_complete(erp: ERP) -> None:
     print(f"  setup: Company {COMPANY!r}, FY {FY_START}..{FY_END}, CoA Standard")
 
 
-def ensure_supplier(erp: ERP) -> None:
+def ensure_supplier(erp: ERPClient) -> None:
     if erp.exists("Supplier", [["name", "=", SUPPLIER]]):
         print(f"  supplier: {SUPPLIER!r} exists")
         return
@@ -71,7 +78,7 @@ def ensure_supplier(erp: ERP) -> None:
     print(f"  supplier: created {SUPPLIER!r}")
 
 
-def ensure_item(erp: ERP) -> None:
+def ensure_item(erp: ERPClient) -> None:
     if not erp.exists("Item", [["name", "=", ITEM_CODE]]):
         erp.insert(
             "Item",
@@ -112,11 +119,10 @@ def ensure_item(erp: ERP) -> None:
 
 
 def main() -> int:
-    erp = ERP()
+    erp = ERPClient.as_administrator()
     if not erp.ping():
         print(f"ERPNext not reachable at {erp.url} — start the stack first", file=sys.stderr)
         return 1
-    erp.login_admin()
     print(f"bootstrapping {erp.url}")
     try:
         ensure_setup_complete(erp)
