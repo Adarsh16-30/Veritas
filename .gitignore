@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environment / secrets — never commit real ERP credentials (Rule 1 real instance)
+.env
+.env.local
+*.key
+secrets/
+
+# Graphify — local build tooling, not product code (CLAUDE.md 3)
+graphify-out/
+
+# Docker local volumes / ERPNext site data
+infra/docker-compose/volumes/
+sites/
+
+# Trace explorer build output
+ui/dist/
+ui/node_modules/
+
+# Scratch results only — real results/*.json ARE committed (Rule 10 traceability)
+results/*.tmp.json
+*.local.json
+
+# OS
+.DS_Store
+Thumbs.db

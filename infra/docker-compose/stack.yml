@@ -1,0 +1,225 @@
+# VERITAS local stack — real ERPNext + agent Postgres + agent Redis (PRD 2.1, 2.5).
+#
+# Memory: mem_limit on every long-running service; steady-state cap ~2.2 GB of
+# container memory. With Docker Desktop / WSL2 overhead the whole thing stays
+# under 4 GB. The `erpnext-create-site` one-shot is the heaviest moment (DB import
+# during `bench new-site --install-app erpnext`) — run the first `up` with the
+# full 4 GB available, later `up`s are light.
+#
+# Bring up:   docker compose -f infra/docker-compose/stack.yml up -d
+# Tear down:  docker compose -f infra/docker-compose/stack.yml down
+# Wipe data:  docker compose -f infra/docker-compose/stack.yml down -v
+#
+# ERPNext ->  http://localhost:8080   (site "frontend", Administrator / admin)
+# Postgres -> localhost:5433          (veritas / veritas, db veritas)
+# Redis    -> localhost:6380
+
+name: veritas
+
+x-erpnext-image: &erpnext-image
+  # Rolling v15 tag. For a reproducible environment pin a point release, e.g.
+  # image: frappe/erpnext:v15.45.4
+  image: frappe/erpnext:version-15
+
+x-erpnext-env: &erpnext-env
+  DB_HOST: erpnext-db
+  DB_PORT: "3306"
+  REDIS_CACHE: erpnext-redis:6379
+  REDIS_QUEUE: erpnext-redis:6379
+  SOCKETIO_PORT: "9000"
+
+services:
+  # --- ERPNext datastores ---------------------------------------------------
+  erpnext-db:
+    image: mariadb:10.6
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+      - --innodb-buffer-pool-size=96M
+      - --performance-schema=OFF
+      - --max-connections=80
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+    volumes:
+      - erpnext-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    mem_limit: 420m
+    restart: unless-stopped
+
+  erpnext-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "48mb", "--maxmemory-policy", "noeviction", "--save", ""]
+    volumes:
+      - erpnext-redis-data:/data
+    mem_limit: 72m
+    restart: unless-stopped
+
+  # --- ERPNext bootstrap one-shots ---------------------------------------------
+  erpnext-configurator:
+    <<: *erpnext-image
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+    environment:
+      <<: *erpnext-env
+    depends_on:
+      erpnext-db:
+        condition: service_healthy
+      erpnext-redis:
+        condition: service_started
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+    restart: "no"
+
+  erpnext-create-site:
+    <<: *erpnext-image
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        wait-for-it -t 180 erpnext-db:3306;
+        wait-for-it -t 180 erpnext-redis:6379;
+        export start=`date +%s`;
+        until [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".db_host // empty"` ]] && \
+              [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_cache // empty"` ]];
+        do
+          echo "waiting for sites/common_site_config.json";
+          sleep 5;
+          if (( `date +%s`-start > 180 )); then echo "no common_site_config.json"; exit 1; fi
+        done;
+        [[ -d "sites/frontend" ]] && echo "site 'frontend' exists, skipping" && exit 0;
+        bench new-site --mariadb-user-host-login-scope='%' --admin-password=admin \
+          --db-root-username=root --db-root-password=admin \
+          --install-app erpnext --set-default frontend;
+    environment:
+      <<: *erpnext-env
+    depends_on:
+      erpnext-configurator:
+        condition: service_completed_successfully
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+    restart: "no"
+
+  # --- ERPNext runtime -------------------------------------------------------
+  erpnext-backend:
+    <<: *erpnext-image
+    environment:
+      <<: *erpnext-env
+    depends_on:
+      erpnext-create-site:
+        condition: service_completed_successfully
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+    mem_limit: 640m
+    restart: unless-stopped
+
+  erpnext-websocket:
+    <<: *erpnext-image
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    environment:
+      <<: *erpnext-env
+    depends_on:
+      erpnext-backend:
+        condition: service_started
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+    mem_limit: 110m
+    restart: unless-stopped
+
+  erpnext-queue:
+    <<: *erpnext-image
+    command: ["bench", "worker", "--queue", "short,default,long"]
+    environment:
+      <<: *erpnext-env
+    depends_on:
+      erpnext-backend:
+        condition: service_started
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+    mem_limit: 420m
+    restart: unless-stopped
+
+  erpnext-scheduler:
+    <<: *erpnext-image
+    command: ["bench", "schedule"]
+    environment:
+      <<: *erpnext-env
+    depends_on:
+      erpnext-backend:
+        condition: service_started
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+    mem_limit: 220m
+    restart: unless-stopped
+
+  erpnext-frontend:
+    <<: *erpnext-image
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: erpnext-backend:8000
+      SOCKETIO: erpnext-websocket:9000
+      FRAPPE_SITE_NAME_HEADER: frontend
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: "120"
+      CLIENT_MAX_BODY_SIZE: "50m"
+    depends_on:
+      erpnext-backend:
+        condition: service_started
+      erpnext-websocket:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    volumes:
+      - erpnext-sites:/home/frappe/frappe-bench/sites
+    mem_limit: 64m
+    restart: unless-stopped
+
+  # --- Agent state + queue (PRD 2.5) --------------------------------------------
+  agent-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: veritas
+      POSTGRES_USER: veritas
+      POSTGRES_PASSWORD: veritas
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=50"]
+    volumes:
+      - agent-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U veritas"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5433:5432"
+    mem_limit: 220m
+    restart: unless-stopped
+
+  agent-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "32mb", "--maxmemory-policy", "noeviction", "--save", ""]
+    volumes:
+      - agent-redis-data:/data
+    ports:
+      - "6380:6379"
+    mem_limit: 56m
+    restart: unless-stopped
+
+volumes:
+  erpnext-db-data:
+  erpnext-redis-data:
+  erpnext-sites:
+  agent-pg-data:
+  agent-redis-data:
