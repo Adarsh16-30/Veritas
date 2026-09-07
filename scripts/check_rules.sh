@@ -63,6 +63,20 @@ if [ -f erp/idempotent.py ]; then
   grep -q 'get_committed'       erp/idempotent.py || { bad "RULE 5 committed-key replay (get_committed) missing"; miss=1; }
   grep -q 'record_committed'    erp/idempotent.py || { bad "RULE 5 record_committed() missing"; miss=1; }
   [ "$miss" -eq 0 ] && pass "RULE 5 idempotent write primitive intact"
+
+  # Agent code must never submit to ERPNext directly — every write goes through
+  # submit_once under a key. (erp/ defines the primitive; scripts/ holds the
+  # deliberate un-agented hand-run control.)
+  h=$(grep -rnE '\.insert_and_submit\(' agent/ orchestrator/ trace/ bench/ harness/ data/ 2>/dev/null || true)
+  if [ -n "$h" ]; then bad "RULE 5 agent code submits to ERPNext outside submit_once:"; echo "$h" | sed 's/^/      /'
+  else pass "RULE 5 all agent writes go through submit_once"; fi
+
+  # And the key must not be derived from anything volatile.
+  if [ -f agent/context.py ]; then
+    if grep -qE 'UPSTREAM_SLOTS' agent/context.py; then
+      pass "RULE 5 idempotency key derived from declared upstream inputs only"
+    else bad "RULE 5 agent/context.py no longer constrains what the key is built from"; fi
+  fi
 else skip "RULE 5 erp/idempotent.py not present yet (pre-Phase 2)"; fi
 
 # RULE 6 — checkpoint before side effect.
@@ -76,6 +90,13 @@ if [ -f orchestrator/checkpoint.py ]; then
       pass "RULE 6 checkpoint precedes side effect in advance()"
     else bad "RULE 6 advance() calls side_effect() before checkpoint()"; fi
   else bad "RULE 6 orchestrator/checkpoint.py missing advance()/checkpoint()"; fi
+
+  # The pipeline must actually use it, not reimplement the ordering itself.
+  if [ -f agent/pipeline.py ]; then
+    if grep -q 'advance(' agent/pipeline.py; then
+      pass "RULE 6 pipeline commits through advance()"
+    else bad "RULE 6 agent/pipeline.py does not route its side effect through advance()"; fi
+  fi
 else skip "RULE 6 orchestrator/checkpoint.py not present yet (pre-Phase 2)"; fi
 
 # RULE 7 — bounded retries; no unbounded retry loop in pipeline/orchestrator.
@@ -83,6 +104,13 @@ if [ -f agent/pipeline.py ]; then
   h=$(grep -nE 'while +True' agent/pipeline.py orchestrator/*.py 2>/dev/null | grep -iv 'queue\|blpop\|listen' || true)
   if [ -n "$h" ]; then bad "RULE 7 unbounded loop in pipeline/orchestrator:"; echo "$h" | sed 's/^/      /'
   else pass "RULE 7 no unbounded retry loop"; fi
+
+  # A cap must exist, and exhausting it must escalate rather than continue.
+  miss=0
+  grep -q 'max_attempts_per_step'      agent/pipeline.py || { bad "RULE 7 no per-step retry cap"; miss=1; }
+  grep -q 'max_llm_calls_per_workflow' agent/pipeline.py || { bad "RULE 7 no per-workflow LLM-call budget"; miss=1; }
+  grep -q 'retry_cap_exhausted'        agent/pipeline.py || { bad "RULE 7 retry exhaustion does not escalate"; miss=1; }
+  [ "$miss" -eq 0 ] && pass "RULE 7 retry cap + LLM budget enforced, exhaustion escalates"
 else skip "RULE 7 agent/pipeline.py not present yet (pre-Phase 2)"; fi
 
 # RULE 8 — no placeholder-data generators outside tests/.

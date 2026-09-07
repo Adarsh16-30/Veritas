@@ -1,0 +1,293 @@
+"""ContextAssembler — Layer 3 input side (PRD §4.1).
+
+Three jobs, in order of importance:
+
+1. **Scope.** Pull only the ERPNext fields this step needs. A step never sees
+   fields it does not need, which is also the prompt-injection boundary: the
+   less untrusted text reaches the model, the less there is to inject through.
+2. **Arithmetic.** Every comparison the decision depends on is computed here, in
+   Python, and handed to the model as a ``DELTA:`` line. The model is never asked
+   to do arithmetic — it is asked to judge.
+3. **Determinism.** The semantic ``attempt_input`` for the step is derived here,
+   which is what the idempotency key is built from (Rule 5). It must not vary
+   between retries of the same logical action.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from typing import Any
+
+from agent.state import Step, StepContext
+from erp.client import ERPClient
+from erp.idempotent import idempotency_key
+
+#: Untrusted free text from the ERP is capped and stripped before it can reach a
+#: prompt. Phase 6 hardens and tests this against the embedded-instruction fault
+#: class; this is the boundary it will be tested at.
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_MAX_FREE_TEXT = 200
+
+
+def sanitize(text: object, limit: int = _MAX_FREE_TEXT) -> str:
+    s = _CONTROL.sub(" ", str(text or ""))
+    s = " ".join(s.split())
+    return s[:limit]
+
+
+@dataclass(frozen=True)
+class WorkflowSpec:
+    """The procurement request a workflow exists to fulfil."""
+
+    workflow_id: str
+    item_code: str
+    qty: float
+    supplier: str
+    rate: float
+    needed_by: str
+    bill_no: str
+    tolerance_pct: float = 2.0
+    approval_threshold: float = 10_000.0
+
+    @property
+    def expected_total(self) -> Decimal:
+        return (Decimal(str(self.qty)) * Decimal(str(self.rate))).quantize(Decimal("0.01"))
+
+
+#: Which already-committed documents each state *consumes*. The idempotency key
+#: is built from these and only these (see ``_attempt_input``), so a step's key is
+#: a function of its inputs and never of its own output.
+UPSTREAM_SLOTS: dict[Step, tuple[str, ...]] = {
+    Step.S1: (),
+    Step.S2: ("S1",),
+    Step.S3: ("S1",),
+    Step.S4: ("S3",),
+    Step.S5: ("S3", "S4_invoice"),
+    Step.S6: ("S4_invoice",),
+}
+
+
+def _d(value: object) -> Decimal:
+    return Decimal(str(value or 0))
+
+
+class ContextAssembler:
+    def __init__(self, erp: ERPClient, spec: WorkflowSpec) -> None:
+        self.erp = erp
+        self.spec = spec
+        self.today = date.today().isoformat()
+
+    # --- public ---------------------------------------------------------------
+    def assemble(self, ctx: StepContext) -> None:
+        builder = self._BUILDERS[ctx.step]
+        facts, summary, amount = builder(self, ctx)
+        ctx.facts = facts
+        ctx.amount_at_stake = amount
+        ctx.idempotency_key = idempotency_key(
+            ctx.workflow_id, ctx.step.value, self._attempt_input(ctx)
+        )
+        ctx.step_context = self._render(ctx, summary, facts)
+
+    # --- the semantic identity of this step's write (Rule 5) -------------------
+    def _attempt_input(self, ctx: StepContext) -> dict[str, Any]:
+        """Stable across retries *and across a crash-resume* of the same logical action.
+
+        Deliberately excludes ``attempt`` and any timestamp, and includes only the
+        documents this step **consumes** — never one it produces. Folding the whole
+        of ``ctx.docs`` in here would be a double-post bug: after a resume,
+        ``restore_docs`` returns the step's own committed output too, the key would
+        differ from the one already recorded, and the guard would let a second
+        document through.
+        """
+        s = self.spec
+        base: dict[str, Any] = {"item": s.item_code, "qty": s.qty, "supplier": s.supplier}
+        if ctx.step in (Step.S3, Step.S4, Step.S6):
+            base["rate"] = s.rate
+        if ctx.step is Step.S4:
+            base["bill_no"] = s.bill_no
+        base["upstream"] = {
+            slot: ctx.docs[slot] for slot in UPSTREAM_SLOTS[ctx.step] if slot in ctx.docs
+        }
+        return base
+
+    def _render(self, ctx: StepContext, summary: dict[str, Any], facts: dict[str, Any]) -> str:
+        lines = [f"STEP: {ctx.step.value} — {_STEP_PURPOSE[ctx.step]}"]
+        lines += [f"{k}: {v}" for k, v in summary.items()]
+        delta = ", ".join(f"{k}={v}" for k, v in facts.items())
+        lines.append(f"DELTA: {delta}")
+        if ctx.rejection_reason:
+            lines.append(f"PREVIOUS ATTEMPT REJECTED: {sanitize(ctx.rejection_reason)}")
+        return "\n".join(lines)
+
+    # --- per-step assembly ------------------------------------------------------
+    def _s1(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
+        s = self.spec
+        item = self.erp.get("Item", s.item_code)
+        summary = {
+            "item": sanitize(item.get("item_code")),
+            "item_name": sanitize(item.get("item_name")),
+            "qty_requested": s.qty,
+            "needed_by": s.needed_by,
+            "is_purchase_item": item.get("is_purchase_item"),
+        }
+        est = s.expected_total
+        facts = {
+            "estimated_value": str(est),
+            "item_is_purchasable": bool(item.get("is_purchase_item")),
+            "qty_positive": s.qty > 0,
+            "needed_by_not_past": s.needed_by >= self.today,
+        }
+        return facts, summary, est
+
+    def _s2(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
+        s = self.spec
+        mr = self.erp.get("Material Request", ctx.docs["S1"])
+        est = s.expected_total
+        summary = {
+            "material_request": mr["name"],
+            "mr_status": sanitize(mr.get("status")),
+            "qty": s.qty,
+            "estimated_total": str(est),
+            "approval_threshold": s.approval_threshold,
+        }
+        facts = {
+            "estimated_total": str(est),
+            "over_approval_threshold": est > Decimal(str(s.approval_threshold)),
+            "headroom": str(Decimal(str(s.approval_threshold)) - est),
+            "mr_submitted": int(mr.get("docstatus", 0)) == 1,
+        }
+        return facts, summary, est
+
+    def _s3(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
+        s = self.spec
+        supplier = self.erp.get("Supplier", s.supplier)
+        mr = self.erp.get("Material Request", ctx.docs["S1"])
+        mr_qty = sum(_d(i.get("qty")) for i in mr.get("items", []))
+        total = s.expected_total
+        summary = {
+            "material_request": mr["name"],
+            "supplier": sanitize(supplier.get("supplier_name")),
+            "supplier_disabled": supplier.get("disabled"),
+            "qty": s.qty,
+            "unit_rate": s.rate,
+            "po_total": str(total),
+        }
+        facts = {
+            "po_total": str(total),
+            "qty_matches_requisition": _d(s.qty) == mr_qty,
+            "qty_delta_vs_mr": str(_d(s.qty) - mr_qty),
+            "supplier_active": not supplier.get("disabled"),
+            "rate_positive": s.rate > 0,
+        }
+        return facts, summary, total
+
+    def _s4(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
+        """Three-way match. Every comparison is computed here, not by the model."""
+        s = self.spec
+        po = self.erp.get("Purchase Order", ctx.docs["S3"])
+        po_total = _d(po.get("grand_total"))
+        po_qty = sum(_d(i.get("qty")) for i in po.get("items", []))
+        received_qty = _d(s.qty)
+        invoiced_total = (received_qty * _d(s.rate)).quantize(Decimal("0.01"))
+
+        variance = invoiced_total - po_total
+        pct = (abs(variance) / po_total * 100) if po_total else Decimal("0")
+        tolerance = Decimal(str(s.tolerance_pct))
+        duplicate = self.erp.duplicate_bill_exists(s.supplier, s.bill_no)
+
+        summary = {
+            "purchase_order": po["name"],
+            "po_total": str(po_total),
+            "po_qty": str(po_qty),
+            "receipt_qty": str(received_qty),
+            "supplier_bill_no": sanitize(s.bill_no),
+            "invoice_total": str(invoiced_total),
+            "tolerance_pct": str(tolerance),
+        }
+        facts = {
+            "qty_match": po_qty == received_qty,
+            "qty_variance": str(received_qty - po_qty),
+            "amount_variance": str(variance),
+            "amount_variance_pct": str(pct.quantize(Decimal("0.001"))),
+            "within_tolerance": pct <= tolerance,
+            "duplicate_bill_no": duplicate,
+            "three_way_match_clean": (
+                po_qty == received_qty and pct <= tolerance and not duplicate
+            ),
+        }
+        return facts, summary, invoiced_total
+
+    def _s5(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
+        s = self.spec
+        pi = self.erp.get("Purchase Invoice", ctx.docs["S4_invoice"])
+        po = self.erp.get("Purchase Order", ctx.docs["S3"])
+        pi_total = _d(pi.get("grand_total"))
+        po_total = _d(po.get("grand_total"))
+        variance = pi_total - po_total
+        pct = (abs(variance) / po_total * 100) if po_total else Decimal("0")
+        summary = {
+            "purchase_invoice": pi["name"],
+            "invoice_total": str(pi_total),
+            "po_total": str(po_total),
+            "invoice_status": sanitize(pi.get("status")),
+            "outstanding": str(_d(pi.get("outstanding_amount"))),
+        }
+        facts = {
+            "variance": str(variance),
+            "variance_pct": str(pct.quantize(Decimal("0.001"))),
+            "within_tolerance": pct <= Decimal(str(s.tolerance_pct)),
+            "discrepancy_open": pct > Decimal(str(s.tolerance_pct)),
+            "invoice_submitted": int(pi.get("docstatus", 0)) == 1,
+        }
+        return facts, summary, pi_total
+
+    def _s6(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
+        pi = self.erp.get("Purchase Invoice", ctx.docs["S4_invoice"])
+        outstanding = _d(pi.get("outstanding_amount"))
+        grand = _d(pi.get("grand_total"))
+        already_paid = self.erp.get_list(
+            "Payment Entry",
+            filters=[
+                ["reference_no", "=", f"PAY-{pi['name']}"],
+                ["docstatus", "=", 1],
+            ],
+            fields=["name"],
+            limit=1,
+        )
+        summary = {
+            "purchase_invoice": pi["name"],
+            "supplier": sanitize(pi.get("supplier")),
+            "grand_total": str(grand),
+            "outstanding_amount": str(outstanding),
+            "payment_account": self.erp.cash_account,
+        }
+        facts = {
+            "outstanding": str(outstanding),
+            "fully_invoiced": grand > 0,
+            "outstanding_equals_total": outstanding == grand,
+            "already_paid": bool(already_paid),
+            "invoice_submitted": int(pi.get("docstatus", 0)) == 1,
+        }
+        return facts, summary, outstanding
+
+    _BUILDERS = {
+        Step.S1: _s1,
+        Step.S2: _s2,
+        Step.S3: _s3,
+        Step.S4: _s4,
+        Step.S5: _s5,
+        Step.S6: _s6,
+    }
+
+
+_STEP_PURPOSE: dict[Step, str] = {
+    Step.S1: "raise a purchase requisition for the requested item",
+    Step.S2: "policy check the requisition before it becomes a commitment",
+    Step.S3: "place the purchase order with the supplier",
+    Step.S4: "three-way match the order, the receipt and the supplier invoice",
+    Step.S5: "resolve any discrepancy the match surfaced",
+    Step.S6: "release payment against the matched invoice",
+}

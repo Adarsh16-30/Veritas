@@ -11,8 +11,16 @@ with a custom minimal role and removes payment scope from the S1..S3 identity.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from _erpclient import ERP, ERPError, write_env
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from dotenv import load_dotenv  # noqa: E402
+
+from erp.client import ERPClient, ERPError  # noqa: E402
+from scripts._env import write_env  # noqa: E402
+
+load_dotenv()
 
 AGENT_USER = "veritas.agent@veritas.local"
 AGENT_FIRST_NAME = "Veritas"
@@ -30,7 +38,7 @@ ROLES = [
 ]
 
 
-def ensure_user(erp: ERP) -> None:
+def ensure_user(erp: ERPClient) -> None:
     if erp.exists("User", [["name", "=", AGENT_USER]]):
         print(f"  user: {AGENT_USER!r} exists")
     else:
@@ -59,19 +67,18 @@ def ensure_user(erp: ERP) -> None:
         print("  user: roles already assigned")
 
 
-def generate_keys(erp: ERP) -> tuple[str, str]:
-    res = erp.method("frappe.core.doctype.user.user.generate_keys", user=AGENT_USER)
+def generate_keys(erp: ERPClient) -> tuple[str, str]:
+    res = erp.call("frappe.core.doctype.user.user.generate_keys", user=AGENT_USER)
     secret = res["api_secret"] if isinstance(res, dict) else res
     key = erp.get("User", AGENT_USER)["api_key"]
     return key, secret
 
 
 def main() -> int:
-    erp = ERP()
+    erp = ERPClient.as_administrator()
     if not erp.ping():
         print(f"ERPNext not reachable at {erp.url}", file=sys.stderr)
         return 1
-    erp.login_admin()
     try:
         ensure_user(erp)
         key, secret = generate_keys(erp)

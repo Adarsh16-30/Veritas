@@ -8,6 +8,12 @@ the idempotency primitive (Rule 5) can be exercised in isolation.
 from __future__ import annotations
 
 import pytest
+from dotenv import load_dotenv
+
+# Integration tests talk to the real ERPNext, Postgres, Redis and Ollama. Their
+# addresses and the scoped agent credentials live in .env (gitignored), exactly as
+# they do for the scripts — load it here so a test run is configured identically.
+load_dotenv()
 
 
 class FakeCommitDB:
