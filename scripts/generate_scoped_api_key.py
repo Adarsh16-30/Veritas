@@ -50,11 +50,11 @@ def ensure_user(erp: ERP) -> None:
     current = {r["role"] for r in user.get("roles", [])}
     if "System Manager" in current:
         raise ERPError("refusing to proceed: agent user has System Manager (must be scoped)")
-    if not current >= ROLES:
-        erp.update(
-            "User", AGENT_USER, {"roles": [{"role": r} for r in sorted(set(ROLES) | current)]}
-        )
-        print(f"  user: roles set -> {sorted(set(ROLES) | current)}")
+    want = set(ROLES)
+    if not want <= current:
+        merged = sorted(want | current)
+        erp.update("User", AGENT_USER, {"roles": [{"role": r} for r in merged]})
+        print(f"  user: roles set -> {merged}")
     else:
         print("  user: roles already assigned")
 
