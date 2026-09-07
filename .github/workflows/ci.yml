@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-test-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.16"
+
+      - name: python 3.11
+        run: uv python install 3.11
+
+      - name: sync deps
+        run: uv sync --group dev
+
+      - name: ruff lint
+        run: uv run ruff check .
+
+      - name: ruff format check
+        run: uv run ruff format --check .
+
+      - name: pytest (integration auto-skips without a running ERPNext)
+        run: uv run pytest
+
+      - name: non-negotiable rule check
+        run: bash scripts/check_rules.sh

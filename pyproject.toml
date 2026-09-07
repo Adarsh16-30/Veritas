@@ -1,0 +1,61 @@
+[project]
+name = "veritas"
+version = "0.1.0"
+description = "Verification-gated autonomous Procure-to-Pay agent operating on a real ERPNext ledger"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.32",
+    "psycopg[binary]>=3.2",
+    "redis>=5.0",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "tenacity>=9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Never let the formatter touch fenced code inside Markdown — VERITAS_PRD.md §9 is
+# "PROVIDED — DO NOT MODIFY" and reformatting its code blocks is a violation.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+markers = [
+    "integration: touches a real running ERPNext instance (skipped unless ERPNEXT_URL is reachable)",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+files = ["agent", "verify", "orchestrator", "erp", "data", "harness", "trace", "bench"]
+
+# PRD §9 code is PROVIDED VERBATIM and must not be modified to satisfy a linter.
+# Relax strict-mode flags for exactly those modules; everything else stays strict.
+[[tool.mypy.overrides]]
+module = ["erp.idempotent", "orchestrator.checkpoint", "verify.conformal", "verify.verifier"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+warn_return_any = false
