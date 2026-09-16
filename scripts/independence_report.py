@@ -112,6 +112,23 @@ def collect(store: Store) -> dict[str, Any]:
     distinct = all(e != v for e, v in families)
     agree_rate = sum(1 for a, b in agreement if a == b) / len(agreement)
 
+    # The phi coefficient needs BOTH variables to vary. In practice the executor
+    # proposes commit on essentially every known-wrong step — that is precisely
+    # why a verifier exists — so `x` is constant and phi stays undefined however
+    # much data is collected. Fixing the subset filter (an earlier bug) was
+    # necessary but not sufficient: the degeneracy is in the phenomenon, not the
+    # filter.
+    #
+    # The conditional disagreement rate *is* defined in exactly that situation,
+    # and answers what Rule 3 actually asks: of the steps the label says must not
+    # commit and the executor wanted to commit anyway, how often did the verifier
+    # say no? A verifier that echoes the executor scores 0.0 here, so this
+    # distinguishes the failure Rule 3 names even when phi cannot.
+    executor_wanted_commit = [(x, v) for x, v in known_wrong if x]
+    caught = sum(1 for _, v in executor_wanted_commit if not v)
+    disagreement = caught / len(executor_wanted_commit) if executor_wanted_commit else None
+    x_varies = len({x for x, _ in known_wrong}) > 1
+
     return {
         "paired_steps": len(paired),
         "verifier_payload_clean": not leaks,
@@ -121,7 +138,18 @@ def collect(store: Store) -> dict[str, Any]:
         "overall_agreement_rate": round(agree_rate, 4),
         "ev_corr": agreement_phi(known_wrong),
         "ev_corr_n": len(known_wrong),
-        "ev_corr_available": bool(known_wrong),
+        "ev_corr_available": bool(known_wrong) and x_varies,
+        "ev_corr_undefined_reason": (
+            None
+            if x_varies or not known_wrong
+            else (
+                "the executor proposed commit on every known-wrong step, so the phi "
+                "coefficient has a constant variable and is undefined by definition"
+            )
+        ),
+        "verifier_disagreement_on_known_wrong": disagreement,
+        "verifier_disagreement_n": len(executor_wanted_commit),
+        "verifier_caught_count": caught,
     }
 
 
@@ -154,6 +182,15 @@ def main() -> int:
     print(f"overall agreement rate         : {report['overall_agreement_rate']}")
     if report["ev_corr_available"]:
         print(f"ev_corr on known-wrong (n={report['ev_corr_n']}): {report['ev_corr']}")
+    elif report.get("ev_corr_undefined_reason"):
+        rate = report["verifier_disagreement_on_known_wrong"]
+        print(f"ev_corr on known-wrong (n={report['ev_corr_n']}): UNDEFINED")
+        print(f"  {report['ev_corr_undefined_reason']}")
+        print(
+            f"verifier disagreement on known-wrong: {rate:.3f} "
+            f"({report['verifier_caught_count']}/{report['verifier_disagreement_n']})"
+        )
+        print("  a verifier that echoed the executor would score 0.000 here")
     else:
         print(
             "ev_corr on known-wrong cases   : UNAVAILABLE — needs ground-truth labels\n"

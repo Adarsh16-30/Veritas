@@ -85,7 +85,7 @@ def _ctx(action: Action = Action.PROCEED) -> StepContext:
     ctx.step_context = "STEP: S6\nDELTA: already_paid=False, invoice_submitted=True"
     ctx.proposed_action = action
     ctx.rationale = "looks fine to me"
-    ctx.facts = {"already_paid": False, "invoice_submitted": True}
+    ctx.facts = {"not_previously_paid": True, "invoice_submitted": True}
     return ctx
 
 

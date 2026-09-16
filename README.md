@@ -77,12 +77,44 @@ The gate is one constructor argument — `Pipeline(gate=None)` is the Phase 2
 baseline and stays runnable, because Rule 4 needs an honest denominator.
 
 ```bash
-uv run python scripts/calibrate.py            # fit the conformal router (needs Phase 4 labels)
+uv run python scripts/calibrate.py            # fit the conformal router
 uv run python scripts/independence_report.py  # Rule 3 evidence from recorded runs
 ```
 
-Both refuse to emit a number they cannot support. See `docs/limitations.md` for
-exactly what Phase 3 does *not* yet measure.
+Both refuse to emit a number they cannot support.
+
+## The benchmark
+
+Phase 4 measures the two configurations against a faulted corpus built from
+**real** U.S. federal contract awards (USAspending.gov — source, exact request
+and sha256 recorded in `data/dataset_manifest.json`, Rule 8). The seven fault
+classes of PRD §6.3 are injected as real ERPNext documents and real procurement
+requests; ground truth comes from the injector that created each condition, never
+from what the agent did.
+
+```bash
+bash scripts/run_benchmark.sh     # corpus -> baseline -> calibrate -> verified -> report
+```
+
+That runs both configurations, fits the conformal router on a split sharing zero
+workflow IDs with the benchmark (Rule 9), reconciles the real general ledger, and
+writes `docs/results.md` with a `[results: ...]` citation on every number
+(Rule 10). It refuses to report a verified-vs-baseline delta unless
+`results/baseline_results.json` exists (Rule 4) — there is no flag to override
+that.
+
+Individual stages, if you want them separately:
+
+```bash
+uv run python -m data.usaspending --limit 200            # fetch + checksum the corpus
+uv run python -m bench.run --config baseline             # the Rule 4 denominator
+uv run python -m bench.run --config verified             # the three-gate path
+uv run python -m bench.reconcile_ledger                  # ask the real GL what happened
+uv run python -m bench.report                            # write docs/results.md
+```
+
+Measured results live in `docs/results.md`; what those numbers do *not* cover
+lives in `docs/limitations.md`, which is worth reading first.
 
 ## Repo layout
 

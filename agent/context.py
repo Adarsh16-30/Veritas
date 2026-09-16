@@ -8,6 +8,19 @@ Three jobs, in order of importance:
 2. **Arithmetic.** Every comparison the decision depends on is computed here, in
    Python, and handed to the model as a ``DELTA:`` line. The model is never asked
    to do arithmetic — it is asked to judge.
+
+   Every boolean DELTA fact is phrased as a **check that passed**: ``True`` means
+   the condition is satisfied and safe, ``False`` means it is not, uniformly.
+   Four facts used to be phrased the other way round (``already_paid``,
+   ``duplicate_bill_no``, ``discrepancy_open``, ``over_approval_threshold``), and
+   the first real benchmark run showed the executor inverting one of them — it
+   read ``already_paid=False`` on a clean invoice and concluded payment was
+   therefore *not* possible. A mixed convention asks the model to solve a
+   polarity puzzle before it can even start reasoning about the evidence, and it
+   silently corrupted the conformal ``facts_clean`` signal, which counts true
+   booleans and so scored a duplicated bill as *cleaner*. The convention is not
+   a hint about what to do: the model still has to decide what a failed check
+   means for this step.
 3. **Determinism.** The semantic ``attempt_input`` for the step is derived here,
    which is what the idempotency key is built from (Rule 5). It must not vary
    between retries of the same logical action.
@@ -52,9 +65,32 @@ class WorkflowSpec:
     tolerance_pct: float = 2.0
     approval_threshold: float = 10_000.0
 
+    #: What the supplier actually delivered and billed, when that differs from
+    #: what was ordered. ``None`` means "exactly as ordered" — the clean case.
+    #:
+    #: These exist because a three-way match needs three independent legs. Until
+    #: Phase 4 the assembler derived the received quantity and the invoiced
+    #: amount from `qty` and `rate` — the same fields the purchase order was
+    #: built from — so `qty_match` was always true and `amount_variance` was
+    #: always exactly zero, for every workflow, by construction. A match whose
+    #: two compared legs are definitionally equal is not a match; it cannot
+    #: detect a short delivery or an overbill because it cannot represent one.
+    received_qty: float | None = None
+    invoice_rate: float | None = None
+
     @property
     def expected_total(self) -> Decimal:
         return (Decimal(str(self.qty)) * Decimal(str(self.rate))).quantize(Decimal("0.01"))
+
+    @property
+    def delivered_qty(self) -> float:
+        """What arrived on the loading dock, which need not be what was ordered."""
+        return self.qty if self.received_qty is None else self.received_qty
+
+    @property
+    def billed_rate(self) -> float:
+        """The rate on the supplier's invoice, which need not be the agreed rate."""
+        return self.rate if self.invoice_rate is None else self.invoice_rate
 
 
 #: Which already-committed documents each state *consumes*. The idempotency key
@@ -173,7 +209,7 @@ class ContextAssembler:
         }
         facts = {
             "estimated_total": str(est),
-            "over_approval_threshold": est > Decimal(str(s.approval_threshold)),
+            "within_approval_threshold": est <= Decimal(str(s.approval_threshold)),
             "headroom": str(Decimal(str(s.approval_threshold)) - est),
             "mr_submitted": int(mr.get("docstatus", 0)) == 1,
         }
@@ -208,8 +244,11 @@ class ContextAssembler:
         po = self.erp.get("Purchase Order", ctx.docs["S3"])
         po_total = _d(po.get("grand_total"))
         po_qty = sum(_d(i.get("qty")) for i in po.get("items", []))
-        received_qty = _d(s.qty)
-        invoiced_total = (received_qty * _d(s.rate)).quantize(Decimal("0.01"))
+        # The delivery note and the supplier invoice are independent evidence
+        # from the ordered quantity and the agreed rate — that independence is
+        # the whole point of a three-way match.
+        received_qty = _d(s.delivered_qty)
+        invoiced_total = (received_qty * _d(s.billed_rate)).quantize(Decimal("0.01"))
 
         variance = invoiced_total - po_total
         pct = (abs(variance) / po_total * 100) if po_total else Decimal("0")
@@ -225,6 +264,8 @@ class ContextAssembler:
             "po_qty": str(po_qty),
             "receipt_qty": str(received_qty),
             "supplier_bill_no": sanitize(s.bill_no),
+            "ordered_rate": str(_d(s.rate)),
+            "invoiced_rate": str(_d(s.billed_rate)),
             "invoice_total": str(invoiced_total),
             "tolerance_pct": str(tolerance),
         }
@@ -234,7 +275,7 @@ class ContextAssembler:
             "amount_variance": str(variance),
             "amount_variance_pct": str(pct.quantize(Decimal("0.001"))),
             "within_tolerance": pct <= tolerance,
-            "duplicate_bill_no": duplicate,
+            "bill_no_not_previously_invoiced": not duplicate,
             "three_way_match_clean": (
                 po_qty == received_qty and pct <= tolerance and not duplicate
             ),
@@ -260,7 +301,7 @@ class ContextAssembler:
             "variance": str(variance),
             "variance_pct": str(pct.quantize(Decimal("0.001"))),
             "within_tolerance": pct <= Decimal(str(s.tolerance_pct)),
-            "discrepancy_open": pct > Decimal(str(s.tolerance_pct)),
+            "no_open_discrepancy": pct <= Decimal(str(s.tolerance_pct)),
             "invoice_submitted": int(pi.get("docstatus", 0)) == 1,
         }
         return facts, summary, pi_total
@@ -289,7 +330,7 @@ class ContextAssembler:
             "outstanding": str(outstanding),
             "fully_invoiced": grand > 0,
             "outstanding_equals_total": outstanding == grand,
-            "already_paid": bool(already_paid),
+            "not_previously_paid": not already_paid,
             "invoice_submitted": int(pi.get("docstatus", 0)) == 1,
         }
         return facts, summary, outstanding

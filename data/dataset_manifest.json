@@ -1,0 +1,57 @@
+{
+  "description": "U.S. federal contract awards (award types A-D) between $2,000 and $60,000, awarded 2022-01-01..2024-12-31.",
+  "distinct_suppliers": 183,
+  "fields": [
+    "Award ID",
+    "Recipient Name",
+    "Award Amount",
+    "Description",
+    "Start Date",
+    "End Date"
+  ],
+  "license": "Public domain (17 U.S.C. \u00a7105, work of the U.S. Government)",
+  "name": "usaspending_contract_awards",
+  "publisher": "USAspending.gov \u2014 U.S. Department of the Treasury",
+  "raw_path": "data/raw/usaspending_awards.json",
+  "record_count": 200,
+  "request_body": {
+    "fields": [
+      "Award ID",
+      "Recipient Name",
+      "Award Amount",
+      "Description",
+      "Start Date",
+      "End Date"
+    ],
+    "filters": {
+      "award_amounts": [
+        {
+          "lower_bound": 2000,
+          "upper_bound": 60000
+        }
+      ],
+      "award_type_codes": [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      "time_period": [
+        {
+          "end_date": "2024-12-31",
+          "start_date": "2022-01-01"
+        }
+      ]
+    },
+    "limit": 25,
+    "order": "asc",
+    "page": 1,
+    "sort": "Award ID",
+    "subawards": false
+  },
+  "retrieved_at": "2026-09-16T13:11:49+00:00",
+  "selection_note": "Amount band and award-type filter are a stated, reproducible selection over real records. No field of any retrieved award is altered, derived or filled in.",
+  "sha256": "e5831a32120dbfc3de4be14958874ae6ef44b63ebd57d984c39db9233ac39e82",
+  "source_docs": "https://api.usaspending.gov/docs/endpoints",
+  "source_url": "https://api.usaspending.gov/api/v2/search/spending_by_award/"
+}

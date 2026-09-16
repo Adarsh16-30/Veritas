@@ -39,7 +39,7 @@ receipt_qty: 10
 invoice_total: 250.00
 tolerance_pct: 2.0
 DELTA: qty_match=True, qty_variance=0, amount_variance=0.00, amount_variance_pct=0.000, \
-within_tolerance=True, duplicate_bill_no=False, three_way_match_clean=True"""
+within_tolerance=True, bill_no_not_previously_invoiced=True, three_way_match_clean=True"""
 
 OVER_TOLERANCE = """STEP: S4 — three-way match the order, the receipt and the supplier invoice
 purchase_order: PUR-ORD-2026-00002
@@ -48,7 +48,7 @@ receipt_qty: 10
 invoice_total: 402.50
 tolerance_pct: 2.0
 DELTA: qty_match=True, qty_variance=0, amount_variance=152.50, amount_variance_pct=61.000, \
-within_tolerance=False, duplicate_bill_no=False, three_way_match_clean=False"""
+within_tolerance=False, bill_no_not_previously_invoiced=True, three_way_match_clean=False"""
 
 DUPLICATE_INVOICE = """STEP: S4 — three-way match the order, the receipt and the supplier invoice
 purchase_order: PUR-ORD-2026-00003
@@ -57,7 +57,7 @@ receipt_qty: 10
 invoice_total: 250.00
 tolerance_pct: 2.0
 DELTA: qty_match=True, qty_variance=0, amount_variance=0.00, amount_variance_pct=0.000, \
-within_tolerance=True, duplicate_bill_no=True, three_way_match_clean=False"""
+within_tolerance=True, bill_no_not_previously_invoiced=False, three_way_match_clean=False"""
 
 
 def _ctx(text: str, workflow_id: str) -> StepContext:
