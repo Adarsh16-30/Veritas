@@ -20,7 +20,16 @@ import json
 import pytest
 
 from agent.state import Action, Route, Step, StepContext
-from verify.conformal import COMMIT, ESCALATE, CalibrationRecord, Calibrator, signals
+from verify.conformal import (
+    COMMIT,
+    ESCALATE,
+    FEATURES,
+    CalibrationModel,
+    CalibrationRecord,
+    Calibrator,
+    LogisticModel,
+    signals,
+)
 from verify.gate import VerificationGate
 from verify.rules import RuleReport, Violation
 from verify.verifier import Verifier
@@ -207,6 +216,74 @@ def test_a_calibrated_gate_routes_through_the_conformal_region() -> None:
     assert outcome.region.calibrated is True
     assert outcome.region.p_commit is not None
     assert gate.calibrated is True
+
+
+def _adversarial_calibration() -> CalibrationModel:
+    """A calibration model that commits on bias alone, ignoring every signal.
+
+    This is deliberately not a ``Calibrator.fit()`` output: an SGD fit's exact
+    decision surface depends on which corner of feature space a test's context
+    happens to land in, and asserting "the fitted model scores this as commit"
+    would be asserting an accident of a specific split rather than exercising
+    the floor. Constructing the model directly makes the precondition — the
+    conformal layer really does say COMMIT — true by construction, for *any*
+    input, which is the honest way to prove the floor (not the region) is what
+    stops it. A gradient-descent fit reproducing this same gap on real labelled
+    data is demonstrated separately and is what motivated the floor.
+    """
+    n = len(FEATURES)
+    model = LogisticModel(weights=[0.0] * n, bias=50.0, mean=[0.0] * n, std=[1.0] * n)
+    return CalibrationModel(
+        model=model,
+        alpha=0.2,
+        qhat=0.5,  # score(COMMIT) ~= 0, score(ESCALATE) ~= 1 -> region == {COMMIT}
+        workflow_ids=("adv-fixture",),
+        n_train=1,
+        n_calibration=1,
+    )
+
+
+def test_a_fitted_model_cannot_commit_over_a_failed_verifier() -> None:
+    """Rule 3: a commit MUST pass the verifier. A calibrated router is fitted
+    weights over signals with no such guarantee built in — this proves the gate
+    enforces the floor the model itself does not."""
+    calibration = _adversarial_calibration()
+    gate, _, _ = _gate(FAIL, calibration=calibration)
+    outcome = gate.evaluate(_ctx(Action.PROCEED), StubBudget(), attempts_remaining=0)
+
+    # Precondition: the fitted model really does score this as a commit, so the
+    # test is exercising the floor and not accidentally passing for free.
+    assert outcome.region is not None and COMMIT in outcome.region.labels
+
+    assert outcome.route is not Route.COMMIT
+    assert outcome.route is Route.ESCALATE
+    assert "floor" not in (outcome.reason or "")  # this branch keeps the verifier's own wording
+    assert "no payment has already been made" in (outcome.reason or "")
+
+
+def test_a_fitted_model_cannot_commit_over_an_executor_that_declined() -> None:
+    """Rule 2: the agent decides whether to proceed. A calibrated router that
+    overturns an explicit HOLD into a COMMIT is replacing that decision, not
+    verifying it."""
+    calibration = _adversarial_calibration()
+    gate, _, _ = _gate(PASS, calibration=calibration)
+    outcome = gate.evaluate(_ctx(Action.HOLD), StubBudget(), attempts_remaining=2)
+
+    assert outcome.region is not None and COMMIT in outcome.region.labels
+    assert outcome.route is Route.ESCALATE
+    assert outcome.reason is not None and "floor" in outcome.reason
+    assert "hold" in outcome.reason
+
+
+def test_the_verifier_floor_still_retries_like_an_honest_verifier_rejection() -> None:
+    """The floor forcing ESCALATE must not silently swallow the retry budget —
+    a failed verifier is a failed verifier whether or not a fitted model would
+    have committed anyway."""
+    calibration = _adversarial_calibration()
+    gate, _, _ = _gate(FAIL, calibration=calibration)
+    outcome = gate.evaluate(_ctx(Action.PROCEED), StubBudget(), attempts_remaining=2)
+    assert outcome.route is Route.RETRY
+    assert "no payment has already been made" in (outcome.reason or "")
 
 
 # --- Rule 7: one budget across both model calls --------------------------------

@@ -171,6 +171,33 @@ class VerificationGate:
         )
 
         decided = route(region)
+
+        # Two floors no downstream probabilistic gate may cross, calibrated or
+        # not. The uncalibrated path (`unanimous_region`) enforces both
+        # structurally, by construction — but a *fitted* calibration model is
+        # just learned weights over signals, with no such guarantee built in. A
+        # model trained where these two signals happen to carry little weight
+        # can commit despite them; a synthetic fit reproduces this in one shot.
+        # Rule 3 says a commit MUST pass the verifier — not "usually pass, per a
+        # model's own judgment of how much that matters". And Rule 2's whole
+        # premise is that the agent decides whether to proceed; a downstream
+        # router that overturns an explicit HOLD/ESCALATE into a COMMIT is not
+        # verifying that decision, it is replacing it. `region` is left as the
+        # model actually computed it — Phase 4's calibration curves need the
+        # honest region, not one edited to match the floor — only the route the
+        # pipeline acts on is forced.
+        #
+        # Forcing `decided` here and nothing else lets both floors fall through
+        # to the ordinary retry/escalate logic below rather than duplicating it:
+        # a floor triggered by a failed verdict is still just "the verifier
+        # rejected this", eligible for the same retry the verifier would have
+        # earned on its own; a floor triggered by executor refusal already had
+        # no retry path even in the uncalibrated case (there is no concrete
+        # objection to feed back when the verifier itself agreed).
+        executor_floor = decided is Route.COMMIT and not proceed
+        if decided is Route.COMMIT and (not verdict.passed or executor_floor):
+            decided = Route.ESCALATE
+
         outcome = GateOutcome(
             route=decided,
             rule_report=report,
@@ -189,11 +216,18 @@ class VerificationGate:
             outcome.reason = "verifier_rejected: " + "; ".join(verdict.violated_expectations)
             return outcome
 
-        outcome.reason = (
-            "verifier_rejected: " + "; ".join(verdict.violated_expectations)
-            if not verdict.passed
-            else "low_confidence: region " + ",".join(sorted(region.labels))
-        )
+        if executor_floor:
+            outcome.reason = (
+                f"floor: calibrated region scored commit despite executor "
+                f"{ctx.proposed_action.value if ctx.proposed_action else '?'}; "
+                "a downstream router may not override the agent's own refusal"
+            )
+        else:
+            outcome.reason = (
+                "verifier_rejected: " + "; ".join(verdict.violated_expectations)
+                if not verdict.passed
+                else "low_confidence: region " + ",".join(sorted(region.labels))
+            )
         return outcome
 
 

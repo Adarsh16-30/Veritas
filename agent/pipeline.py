@@ -151,24 +151,36 @@ class Pipeline:
                 else f"executor_chose_{decision.action.value}"
             )
 
-            self._record(ctx, attempt, decision.action.value, trace_id, outcome, decision, False)
-
             if route is Route.RETRY:
                 # Rule 7: a retry is still bounded by the same attempt loop.
+                self._record(
+                    ctx, attempt, decision.action.value, trace_id, outcome, decision, False
+                )
                 last_error = reason
                 ctx.rejection_reason = reason
                 continue
 
             if route is Route.ESCALATE:
+                self._record(
+                    ctx, attempt, decision.action.value, trace_id, outcome, decision, False
+                )
                 return self._escalate(ctx, reason, started, attempt)
 
             try:
                 names = self._commit(ctx)
             except ERPError as e:
+                self._record(
+                    ctx, attempt, decision.action.value, trace_id, outcome, decision, False
+                )
                 last_error = f"erp_write_failed: {e}"
                 ctx.rejection_reason = last_error
                 continue
 
+            # Recorded exactly once per attempt, with the real outcome — never
+            # written first as `committed=False` and overwritten moments later.
+            # A concurrent reader of `step_attempts` (the trace explorer, a human
+            # watching an escalation queue) must never see a transient false row
+            # for a step that is, in fact, about to commit.
             self._record(
                 ctx, attempt, decision.action.value, trace_id, outcome, decision, bool(names), names
             )

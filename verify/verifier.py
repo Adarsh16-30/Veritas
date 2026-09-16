@@ -346,12 +346,33 @@ class Verifier:
                 raise VerifierError(
                     f"checklist answer {i} has non-boolean 'satisfied': {satisfied!r}"
                 )
-            try:
-                n = int(entry.get("n", i))
-            except (TypeError, ValueError):
-                n = i
-            in_range = bool(checklist) and 1 <= n <= len(checklist)
-            label = checklist[n - 1] if in_range else f"expectation {n}"
+            # Position in the array is authoritative for which expectation this
+            # answers — never the model's self-reported `n`. Trusting `n` alone
+            # only checked that the *count* of answers matched the checklist
+            # length; a model could answer {"n": 1} three times and satisfy that
+            # count while never addressing expectations 2 and 3, and the missing
+            # ones would default to "no objection" rather than "unchecked". A
+            # verifier whose entire job is checking every expectation must not be
+            # able to silently skip one and still pass. If `n` is present it must
+            # agree with position — a mismatch means the model deviated from the
+            # required order and the answer is not trustworthy enough to use.
+            if checklist:
+                declared_n = entry.get("n")
+                if declared_n is not None:
+                    try:
+                        declared_n = int(declared_n)
+                    except (TypeError, ValueError) as e:
+                        raise VerifierError(
+                            f"checklist answer {i} has a non-integer 'n': {entry.get('n')!r}"
+                        ) from e
+                    if declared_n != i:
+                        raise VerifierError(
+                            f"checklist answers out of order: position {i} declared n={declared_n}"
+                            f" (expected {i}) — answers must address expectations 1..N in order"
+                        )
+                label = checklist[i - 1]
+            else:
+                label = f"expectation {i}"
             evidence.append(f"{label} <- {entry.get('evidence', 'none')}")
             if not satisfied:
                 violations.append(label)
