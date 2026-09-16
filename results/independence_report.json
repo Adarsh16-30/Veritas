@@ -1,0 +1,15 @@
+{
+  "commit": "a7217146e6cba1b076e3e8fa9c2a4dae50096c3e",
+  "distinct_model_family": true,
+  "ev_corr": null,
+  "ev_corr_available": false,
+  "ev_corr_n": 0,
+  "generated_at": "2026-09-16T11:29:27+00:00",
+  "model_pairs": [
+    "llama3 -> qwen2.5-coder"
+  ],
+  "overall_agreement_rate": 1.0,
+  "paired_steps": 57,
+  "payload_leaks": [],
+  "verifier_payload_clean": true
+}
