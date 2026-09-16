@@ -66,6 +66,10 @@ if [ -f verify/verifier.py ]; then
   grep -q 'build_verifier_payload(ctx)' verify/verifier.py     || { bad "RULE 3 verifier prompt does not go through build_verifier_payload()"; miss=1; }
   # Independence must be enforced, not just described.
   grep -q 'class IndependenceSpec' verify/verifier.py     || { bad "RULE 3 no independence record on verifier calls"; miss=1; }
+  # A checklist a model can under-answer and still pass is theatre with extra
+  # steps: length alone does not stop a duplicated index from silently skipping
+  # a real expectation (found in a real run; see docs/limitations.md).
+  grep -q 'out of order' verify/verifier.py     || { bad "RULE 3 checklist answers are not order-verified against position"; miss=1; }
   [ "$miss" -eq 0 ] && pass "RULE 3 verifier independent; rationale withheld and allowlist enforced"
 
   # The verifier must never be handed the executor's rationale at the call site.
@@ -74,6 +78,16 @@ if [ -f verify/verifier.py ]; then
   h=$(grep -nE '(ctx|decision)\.rationale|rationale *=|"rationale"' verify/gate.py 2>/dev/null || true)
   if [ -n "$h" ]; then bad "RULE 3 verify/gate.py passes the executor rationale onward:"; echo "$h" | sed 's/^/      /'
   else pass "RULE 3 the gate never passes a rationale to the verifier"; fi
+
+  # A commit MUST pass the verifier (Rule 3) regardless of what a *fitted*
+  # calibration model's region says — the uncalibrated path enforces this
+  # structurally, a fitted model does not, on its own (found in a real audit;
+  # see docs/limitations.md).
+  if [ -f verify/gate.py ]; then
+    if grep -q 'executor_floor' verify/gate.py && grep -qE 'not verdict\.passed or executor_floor' verify/gate.py; then
+      pass "RULE 3/2 a fitted calibration model cannot override a failed verdict or a declined executor"
+    else bad "RULE 3/2 verify/gate.py has no floor stopping a calibrated commit over a failed verdict or declined executor"; fi
+  fi
 else skip "RULE 3 verify/verifier.py not present yet (pre-Phase 3)"; fi
 
 # RULE 4 — no delta emission without a recorded baseline.

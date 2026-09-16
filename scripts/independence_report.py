@@ -94,8 +94,19 @@ def collect(store: Store) -> dict[str, Any]:
         agreement.append((proposed_commit, verifier_passed))
 
         fault_step = ex["fault_step"]
-        if fault_step and str(key[1]) >= str(fault_step) and proposed_commit:
-            # The executor proposed committing a step the label says was wrong.
+        if fault_step and str(key[1]) >= str(fault_step):
+            # "Known-wrong" describes the STEP, not the executor's specific
+            # answer on it: this step's label says the correct action is not to
+            # commit, full stop. `x` must still vary within the subset — some
+            # instances the executor correctly refused, others it wrongly
+            # committed — or phi is computing correlation against a constant
+            # and is undefined by construction. Filtering this list down to
+            # `proposed_commit=True` only, as an earlier version of this script
+            # did, makes `x` constant and `ev_corr` permanently `None` even once
+            # real labels exist — silently defeating the one measurement Rule 3
+            # actually needs ("a verifier that passes whatever the executor
+            # proposes drives ev_corr -> 1 and fails the build" can never be
+            # observed if `x` never takes the value 0).
             known_wrong.append((proposed_commit, verifier_passed))
 
     distinct = all(e != v for e, v in families)

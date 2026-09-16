@@ -277,6 +277,22 @@ class LedgerGuard:
         self.spec = spec
 
     def evaluate(self, ctx: StepContext) -> tuple[list[Violation], list[str]]:
+        # Only S3, S4 and S6 get a fresh ledger read. That is a scoped decision,
+        # not an oversight, and the scope is: check here exactly the facts whose
+        # staleness ERPNext's own write path would NOT catch for us.
+        #
+        # * S1 is the workflow's first write — there is no upstream document to
+        #   have gone stale yet.
+        # * S2 and S5 are judgement gates. If their assembled facts are stale
+        #   (e.g. a human cancelled the Material Request between S1 and S2),
+        #   the very next side-effecting call — `make_purchase_order` for S2,
+        #   the S6 checks below for S5 — either fails against the real ERP
+        #   naturally or is re-verified there. A stale S2/S5 pass costs an extra
+        #   retry, never an unsafe write.
+        # * S3 (disabled supplier), S4 (duplicate bill number) and S6 (double
+        #   payment, frozen account) are exactly the cases ERPNext's own domain
+        #   logic does NOT block on this API path — nothing upstream re-checks
+        #   them, so this is the only place they are re-checked at all.
         checker = {
             Step.S3: self._s3,
             Step.S4: self._s4,

@@ -284,6 +284,73 @@ def test_unusable_answers_raise_rather_than_defaulting_to_pass(reply: str) -> No
         Verifier(llm, executor_model=EXECUTOR_MODEL).verify(_ctx())
 
 
+def test_duplicate_checklist_index_cannot_silently_skip_an_expectation() -> None:
+    """The gap a real run's checklist rewrite made possible.
+
+    The only guard used to be `len(checks) == len(checklist)`. A model that
+    answers {"n": 1} three times satisfies that count while never addressing
+    expectations 2 and 3 — which then default to "no objection" and the step
+    passes, even though two of its three checklist items were never checked.
+    Position in the array is now authoritative; a declared `n` that disagrees
+    with position is rejected rather than silently trusted.
+    """
+    exploit = {
+        "checks": [
+            {"n": 1, "evidence": "invoice_submitted=True", "satisfied": True},
+            {"n": 1, "evidence": "invoice_submitted=True", "satisfied": True},
+            {"n": 1, "evidence": "invoice_submitted=True", "satisfied": True},
+        ],
+        "confidence": 0.9,
+    }
+    llm = ScriptedLLM(exploit)
+    with pytest.raises(VerifierError, match="out of order"):
+        Verifier(llm, executor_model=EXECUTOR_MODEL).verify(_ctx())
+
+
+def test_checklist_answers_out_of_order_are_rejected_even_without_duplicates() -> None:
+    shuffled = {
+        "checks": [
+            {"n": 2, "evidence": "x", "satisfied": True},
+            {"n": 1, "evidence": "y", "satisfied": True},
+            {"n": 3, "evidence": "z", "satisfied": True},
+        ],
+        "confidence": 0.9,
+    }
+    llm = ScriptedLLM(shuffled)
+    with pytest.raises(VerifierError, match="out of order"):
+        Verifier(llm, executor_model=EXECUTOR_MODEL).verify(_ctx())
+
+
+def test_a_non_integer_n_is_rejected_rather_than_silently_repositioned() -> None:
+    bad_n = {
+        "checks": [{"n": "one", "evidence": "x", "satisfied": True}] * 3,
+        "confidence": 0.9,
+    }
+    llm = ScriptedLLM(bad_n)
+    with pytest.raises(VerifierError, match="non-integer"):
+        Verifier(llm, executor_model=EXECUTOR_MODEL).verify(_ctx())
+
+
+def test_answers_in_correct_order_still_pass() -> None:
+    ordered = _checks(True, True, True)
+    llm = ScriptedLLM(ordered)
+    call = Verifier(llm, executor_model=EXECUTOR_MODEL).verify(_ctx())
+    assert call.verdict.passed is True
+
+
+def test_answers_omitting_n_entirely_still_work_by_position() -> None:
+    """`n` is redundant, not required — the prompt already asks for answers in
+    order, and position alone is sufficient once trusted as authoritative."""
+    no_n = {
+        "checks": [{"evidence": "x", "satisfied": ok} for ok in (True, False, True)],
+        "confidence": 0.9,
+    }
+    llm = ScriptedLLM(no_n)
+    call = Verifier(llm, executor_model=EXECUTOR_MODEL).verify(_ctx())
+    assert call.verdict.passed is False
+    assert call.verdict.violated_expectations == [CHECKLIST[Step.S6][1]]
+
+
 # --- METRICS §4.1 ---------------------------------------------------------------
 def test_phi_is_one_when_the_verifier_rubber_stamps_the_executor() -> None:
     """A verifier that passes exactly when the executor proposes commit."""
