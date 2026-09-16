@@ -199,3 +199,57 @@ def test_double_dispatch_of_a_committed_step_posts_nothing_new(store: Store) -> 
     assert list(second.skipped) == list(Step), "a completed workflow must skip every step"
     assert before == after, f"replay posted new documents: {before} -> {after}"
     assert second.docs == first.docs
+
+
+@needs_stack
+def test_crash_after_the_invoice_resumes_instead_of_escalating(store: Store) -> None:
+    """The duplicate-bill guard must not fire on our own orphaned invoice.
+
+    Crash window 2 again, but on the *Purchase Invoice* rather than the receipt.
+    This one has a second failure mode the receipt does not: the supplier bill
+    number is the ERP's own duplicate-invoice key, so on resume S4 re-reads the
+    ledger, finds an invoice with this bill number already submitted, and — if it
+    does not recognise the document as its own — calls it a duplicate. The
+    workflow then escalates to a human and `_adopt_orphan` never runs, turning a
+    recoverable crash into a stop. Rule 6 says resume; this proves it does.
+    """
+    wf = f"wf-crashinv-{uuid.uuid4().hex[:8]}"
+    spec = _spec(wf)
+
+    healthy = ERPClient()
+    machine = _machine(store, healthy, spec)
+    store.create_workflow(wf, Step.S1)
+    docs: dict[str, str] = {}
+    for step in (Step.S1, Step.S2, Step.S3):
+        ctx = StepContext(workflow_id=wf, step=step, docs=docs)
+        result = machine.pipeline.run_step(ctx)
+        docs = ctx.docs
+        assert result.route.value == "commit", f"{step.value} escalated: {result.reason}"
+
+    # The receipt commits, the invoice is submitted, then the worker dies.
+    crashing = CrashAfterSubmit(crash_on="Purchase Invoice")
+    ctx = StepContext(workflow_id=wf, step=Step.S4, docs=dict(docs))
+    with pytest.raises(SimulatedCrash):
+        _machine(store, crashing, spec).pipeline.run_step(ctx)
+
+    orphan = crashing.submitted[-1]
+    assert store.get_committed_by_doc(orphan) is None, (
+        "precondition failed: the crash was supposed to land before Postgres recorded the key"
+    )
+
+    # The bill number is now visibly taken — by us.
+    assert ERPClient().duplicate_bill_exists(spec.supplier, spec.bill_no), (
+        "precondition failed: the orphaned invoice should be findable by its bill number"
+    )
+
+    outcome = _machine(store, ERPClient(), spec).run(wf)
+
+    assert outcome.completed, (
+        f"resume escalated instead of recovering: {outcome.reason} — the workflow "
+        "most likely mistook its own orphaned invoice for a duplicate bill"
+    )
+    assert outcome.docs["S4_invoice"] == orphan, (
+        f"resume posted a second invoice: {outcome.docs['S4_invoice']} != {orphan}"
+    )
+    for effect in _machine(store, ERPClient(), spec).gl_effect(outcome.docs):
+        assert effect["balanced"], f"unbalanced GL for {effect['voucher_no']}"

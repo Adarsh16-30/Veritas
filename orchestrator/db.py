@@ -225,16 +225,35 @@ class Store:
         committed: bool,
         doc_name: str | None,
         latency_ms: int,
+        verdict: str | None = None,
+        confidence: float | None = None,
+        region: str | None = None,
+        signals: dict[str, Any] | None = None,
+        gate: dict[str, Any] | None = None,
     ) -> None:
+        """One row per (workflow, step, attempt), PRD §3.3.
+
+        The verification columns stay NULL in the baseline configuration. That is
+        the honest encoding of "no gate ran" — distinguishable in the data from a
+        gate that ran and passed, which matters when Phase 4 compares the two.
+
+        ``latency_ms`` is the **executor** call only. With the gate active there
+        is a second model call per attempt; its cost is in ``gate`` under
+        ``verifier_latency_ms``. Summing this column alone would under-report the
+        verified configuration's latency by roughly half.
+        """
         self.conn.execute(
             """
             INSERT INTO step_attempts (workflow_id, step, attempt, action, rationale_ref,
-                                       committed, doc_name, latency_ms)
-                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                       committed, doc_name, latency_ms,
+                                       verdict, confidence, region, signals, gate)
+                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (workflow_id, step, attempt)
               DO UPDATE SET action = EXCLUDED.action, rationale_ref = EXCLUDED.rationale_ref,
                             committed = EXCLUDED.committed, doc_name = EXCLUDED.doc_name,
-                            latency_ms = EXCLUDED.latency_ms
+                            latency_ms = EXCLUDED.latency_ms, verdict = EXCLUDED.verdict,
+                            confidence = EXCLUDED.confidence, region = EXCLUDED.region,
+                            signals = EXCLUDED.signals, gate = EXCLUDED.gate
             """,
             (
                 workflow_id,
@@ -245,6 +264,11 @@ class Store:
                 committed,
                 doc_name,
                 latency_ms,
+                verdict,
+                confidence,
+                region,
+                Json(signals or {}),
+                Json(gate or {}),
             ),
         )
 

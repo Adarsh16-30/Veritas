@@ -49,12 +49,19 @@ uv run python scripts/handrun_buying_chain.py     # un-agented control: the chai
 uv run python scripts/run_workflow.py --workflow-id wf-001 --show-trace   # the baseline agent
 ```
 
-The agent needs a local model. Install [Ollama](https://ollama.com), start it,
-and pull the executor model:
+The agent needs two local models: an executor, and an **independent verifier**
+from a different model family (Rule 3 — two tags of the same weights agreeing
+with each other is not verification). Install [Ollama](https://ollama.com),
+start it, and pull both:
 
 ```bash
-ollama pull llama3:8b-instruct-q4_K_M    # or set OLLAMA_MODEL
+ollama pull llama3:8b-instruct-q4_K_M    # executor  — or set OLLAMA_MODEL
+ollama pull qwen2.5:7b-instruct-q4_K_M   # verifier  — or set VERIFIER_MODEL
 ```
+
+Leave `VERIFIER_MODEL` unset and `verify.gate.select_verifier_model` picks an
+installed model of another family; `verify.verifier.Verifier` refuses to be
+built if the result is not actually independent.
 
 `scripts/handrun_buying_chain.py` is the Phase 1 success check: one command
 produces a full S1–S6 document chain and prints the resulting GL entries.
@@ -62,6 +69,20 @@ produces a full S1–S6 document chain and prints the resulting GL entries.
 action from a real model call, every write idempotent, state checkpointed before
 each side effect. Re-running the same `--workflow-id` resumes it and posts
 nothing new.
+
+Phase 3 adds the verification gate: deterministic accounting invariants plus a
+fresh read of the real ledger, then an independent verifier that never sees the
+executor's reasoning, then a conformal prediction region that routes the step.
+The gate is one constructor argument — `Pipeline(gate=None)` is the Phase 2
+baseline and stays runnable, because Rule 4 needs an honest denominator.
+
+```bash
+uv run python scripts/calibrate.py            # fit the conformal router (needs Phase 4 labels)
+uv run python scripts/independence_report.py  # Rule 3 evidence from recorded runs
+```
+
+Both refuse to emit a number they cannot support. See `docs/limitations.md` for
+exactly what Phase 3 does *not* yet measure.
 
 ## Repo layout
 

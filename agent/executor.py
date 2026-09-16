@@ -72,6 +72,7 @@ class OllamaLLM:
         seed: int = 7,
         num_predict: int = 220,
         timeout: int = 180,
+        num_gpu: int | None = None,
     ) -> None:
         self.name = model or os.environ.get("OLLAMA_MODEL", "llama3:8b-instruct-q4_K_M")
         self.url = (url or os.environ.get("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
@@ -79,6 +80,12 @@ class OllamaLLM:
         self.seed = seed
         self.num_predict = num_predict
         self.timeout = timeout
+        # `num_gpu=0` pins this model to CPU. The executor and the verifier are
+        # different models by Rule 3, and on a small GPU they cannot both be
+        # resident — Ollama then evicts and reloads one on *every* step, which
+        # costs far more than running the second model on CPU. Set per-model, so
+        # the deployment decides; nothing here assumes a particular machine.
+        self.num_gpu = num_gpu
 
     def complete(self, system: str, user: str) -> str:
         try:
@@ -94,6 +101,7 @@ class OllamaLLM:
                         "temperature": self.temperature,
                         "seed": self.seed,
                         "num_predict": self.num_predict,
+                        **({} if self.num_gpu is None else {"num_gpu": self.num_gpu}),
                     },
                 },
                 timeout=self.timeout,

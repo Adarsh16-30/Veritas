@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS step_attempts (
     UNIQUE (workflow_id, step, attempt)
 );
 
+-- Phase 3 adds the gate's own record to each attempt. ALTER rather than editing
+-- the CREATE above, so an existing database picks the columns up on the next
+-- apply_schema run instead of silently staying on the old shape.
+ALTER TABLE step_attempts ADD COLUMN IF NOT EXISTS signals JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE step_attempts ADD COLUMN IF NOT EXISTS gate    JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 -- Phase 4 ground truth (PRD §3.3). Created now so the schema is complete;
 -- populated by the fault-injection harness.
 CREATE TABLE IF NOT EXISTS labels (
@@ -73,6 +79,12 @@ CREATE TABLE IF NOT EXISTS labels (
     fault_class              TEXT NOT NULL,
     expected_terminal_action TEXT NOT NULL
 );
+
+-- Which step the injected fault first becomes visible at. Phase 3's calibrator
+-- needs per-step truth, and a workflow-level "should have escalated" cannot say
+-- *where* without this. Nullable: a clean workflow has no fault step, and an
+-- escalation label without one is skipped rather than guessed at.
+ALTER TABLE labels ADD COLUMN IF NOT EXISTS fault_step TEXT;
 
 CREATE INDEX IF NOT EXISTS traces_workflow_idx       ON traces (workflow_id, step, attempt);
 CREATE INDEX IF NOT EXISTS step_attempts_wf_idx      ON step_attempts (workflow_id, step);

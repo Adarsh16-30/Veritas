@@ -73,15 +73,34 @@ class Verdict:
 
 @dataclass
 class Region:
-    """Conformal prediction region, populated in Phase 3."""
+    """Conformal prediction region (PRD §9.3).
+
+    ``calibrated`` is load-bearing, not decoration. A region produced before a
+    calibration model has been fitted carries no coverage guarantee, and
+    ``verify.conformal`` refuses to compute coverage or ECE from one. Without
+    this flag an uncalibrated region and a calibrated one are indistinguishable
+    downstream, which is precisely how an unearned confidence number gets
+    reported as a measured one.
+    """
 
     labels: frozenset[str] = frozenset()
+    p_commit: float | None = None
+    calibrated: bool = False
+    alpha: float | None = None
 
     def is_singleton(self) -> bool:
         return len(self.labels) == 1
 
     def covers(self, label: str) -> bool:
         return label in self.labels
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "labels": sorted(self.labels),
+            "p_commit": self.p_commit,
+            "calibrated": self.calibrated,
+            "alpha": self.alpha,
+        }
 
 
 @dataclass

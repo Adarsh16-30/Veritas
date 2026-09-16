@@ -31,5 +31,11 @@ jobs:
       - name: pytest (integration auto-skips without a running ERPNext)
         run: uv run pytest
 
+      - name: mypy strict
+        run: uv run mypy --strict
+
+      - name: PRD section 9 provided code is verbatim
+        run: uv run python scripts/check_provided_code.py
+
       - name: non-negotiable rule check
         run: bash scripts/check_rules.sh

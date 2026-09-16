@@ -1,0 +1,121 @@
+# Deterministic accounting invariants — gate 1 of 3 (PRD §2.4, §7 Phase 3).
+#
+# These are HARD invariants, not preferences. A violation is terminal: the step
+# escalates to a human and is never retried, because no number of retries makes
+# an over-tolerance invoice within tolerance. They are deliberately declarative
+# and data-driven so the set can be audited without reading Python.
+#
+# Each `expr` is evaluated over the DELTA facts that ContextAssembler already
+# computed in Python from the real ERPNext documents (PRD §4.1). The expression
+# language is a restricted subset — names, literals, comparisons, and/or/not —
+# evaluated by verify.rules._SafeEval. There are no function calls and no
+# attribute access, so an invariant cannot have side effects.
+#
+# `expr` states what must be TRUE to proceed. The invariant is violated when it
+# evaluates false. A name that is not a fact of that step is a load-time error,
+# never a silent pass.
+
+version: 1
+
+invariants:
+  # --- S1 requisition -------------------------------------------------------
+  - id: S1_ITEM_IS_PURCHASABLE
+    step: S1
+    expr: item_is_purchasable
+    message: "item is not flagged as a purchase item in ERPNext"
+    kind: master_data
+
+  - id: S1_QTY_POSITIVE
+    step: S1
+    expr: qty_positive
+    message: "requisition quantity must be greater than zero"
+    kind: arithmetic
+
+  # --- S2 policy check ------------------------------------------------------
+  - id: S2_REQUISITION_SUBMITTED
+    step: S2
+    expr: mr_submitted
+    message: "the material request is not submitted; there is nothing to police"
+    kind: document_state
+
+  - id: S2_WITHIN_APPROVAL_AUTHORITY
+    step: S2
+    expr: not over_approval_threshold
+    message: "estimated total exceeds the delegated approval threshold; a human must authorise it"
+    kind: budget
+
+  # --- S3 purchase order ----------------------------------------------------
+  - id: S3_SUPPLIER_ACTIVE
+    step: S3
+    expr: supplier_active
+    message: "supplier is disabled in ERPNext; no order may be placed with it"
+    kind: vendor_validity
+
+  - id: S3_RATE_POSITIVE
+    step: S3
+    expr: rate_positive
+    message: "purchase order rate must be greater than zero"
+    kind: arithmetic
+
+  - id: S3_QTY_MATCHES_REQUISITION
+    step: S3
+    expr: qty_matches_requisition
+    message: "order quantity does not match the approved requisition quantity"
+    kind: three_way_match
+
+  # --- S4 three-way match ---------------------------------------------------
+  - id: S4_QTY_MATCH
+    step: S4
+    expr: qty_match
+    message: "received quantity does not match the ordered quantity"
+    kind: three_way_match
+
+  - id: S4_WITHIN_TOLERANCE
+    step: S4
+    expr: within_tolerance
+    message: "invoice amount is outside the agreed price tolerance against the purchase order"
+    kind: tolerance
+
+  - id: S4_NO_DUPLICATE_BILL
+    step: S4
+    expr: not duplicate_bill_no
+    message: "a submitted invoice already exists for this supplier bill number"
+    kind: duplicate_guard
+
+  # --- S5 discrepancy resolution --------------------------------------------
+  - id: S5_INVOICE_SUBMITTED
+    step: S5
+    expr: invoice_submitted
+    message: "the purchase invoice is not submitted; the discrepancy is not yet real"
+    kind: document_state
+
+  - id: S5_NO_OPEN_DISCREPANCY
+    step: S5
+    expr: not discrepancy_open
+    message: "an unresolved price discrepancy remains open against the purchase order"
+    kind: tolerance
+
+  # --- S6 payment release ---------------------------------------------------
+  - id: S6_INVOICE_SUBMITTED
+    step: S6
+    expr: invoice_submitted
+    message: "cannot pay an invoice that is not submitted"
+    kind: document_state
+
+  - id: S6_NOT_ALREADY_PAID
+    step: S6
+    expr: not already_paid
+    message: "a submitted payment entry already exists for this invoice"
+    kind: duplicate_guard
+
+  - id: S6_HAS_OUTSTANDING
+    step: S6
+    expr: outstanding > 0
+    message: "invoice has no outstanding balance; paying it would over-pay the supplier"
+    kind: arithmetic
+
+  - id: S6_FULLY_INVOICED
+    step: S6
+    expr: fully_invoiced
+    message: "invoice grand total is zero; there is nothing to pay"
+    kind: arithmetic

@@ -18,6 +18,7 @@ from agent.state import Route, Status, Step, StepContext, StepResult
 from erp.client import ERPClient
 from orchestrator.db import Store
 from trace.store import TraceLogger
+from verify.gate import VerificationGate
 
 #: Rebuilding ``ctx.docs`` after a crash: which slot a committed document fills.
 DOC_SLOT_OF: dict[str, str] = {
@@ -56,11 +57,14 @@ class WorkflowMachine:
         spec: WorkflowSpec,
         executor: Executor,
         policy: Policy | None = None,
+        gate: VerificationGate | None = None,
     ) -> None:
         self.db = db
         self.erp = erp
         self.spec = spec
         self.assembler = ContextAssembler(erp, spec)
+        # `gate=None` is the Phase 2 baseline configuration and stays reachable
+        # for as long as Rule 4 needs a denominator to compare against.
         self.pipeline = Pipeline(
             db=db,
             erp=erp,
@@ -68,7 +72,12 @@ class WorkflowMachine:
             executor=executor,
             tracer=TraceLogger(db),
             policy=policy,
+            gate=gate,
         )
+
+    @property
+    def verified(self) -> bool:
+        return self.pipeline.verified
 
     # --- resume support ---------------------------------------------------------
     def restore_docs(self, workflow_id: str) -> dict[str, str]:

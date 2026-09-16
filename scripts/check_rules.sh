@@ -27,6 +27,16 @@ non_test_py() {
   fi | grep -v -E '^(\./)?tests/' || true
 }
 
+# Tracked files plus not-yet-committed ones: a check that only sees `git ls-files`
+# reports a brand-new file as missing.
+repo_files() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git ls-files --cached --others --exclude-standard
+  else
+    find . -type f -not -path './.git/*'
+  fi
+}
+
 grep_non_test() { non_test_py | tr '\n' '\0' | xargs -0 -r grep -nE "$1" 2>/dev/null || true; }
 
 echo "== VERITAS rule check =="
@@ -43,11 +53,27 @@ if [ -f agent/executor.py ]; then
   else pass "RULE 2 no hardcoded action map"; fi
 else skip "RULE 2 agent/executor.py not present yet (pre-Phase 2)"; fi
 
-# RULE 3 — verifier payload must not carry executor rationale.
+# RULE 3 — independent verifier: rationale withheld, different model/framing.
 if [ -f verify/verifier.py ]; then
-  if grep -q 'assert *"rationale" not in payload' verify/verifier.py; then
-    pass "RULE 3 verifier excludes executor rationale (guard present)"
-  else bad "RULE 3 verify/verifier.py missing the rationale-exclusion assert (PRD §9.4)"; fi
+  miss=0
+  grep -q 'assert *"rationale" not in payload' verify/verifier.py     || { bad "RULE 3 verify/verifier.py missing the rationale-exclusion assert (PRD §9.4)"; miss=1; }
+  # §9.4's assert only catches a key literally named `rationale`. The payload
+  # shape must also be allowlisted, or a later extra field walks the executor's
+  # reasoning straight in.
+  grep -q 'ALLOWED_PAYLOAD_KEYS' verify/verifier.py     || { bad "RULE 3 verifier payload shape is not allowlisted"; miss=1; }
+  grep -q 'def assert_no_rationale_leak' verify/verifier.py     || { bad "RULE 3 no runtime rationale-leak check"; miss=1; }
+  # The prompt must be built from the guarded payload, not from ctx directly.
+  grep -q 'build_verifier_payload(ctx)' verify/verifier.py     || { bad "RULE 3 verifier prompt does not go through build_verifier_payload()"; miss=1; }
+  # Independence must be enforced, not just described.
+  grep -q 'class IndependenceSpec' verify/verifier.py     || { bad "RULE 3 no independence record on verifier calls"; miss=1; }
+  [ "$miss" -eq 0 ] && pass "RULE 3 verifier independent; rationale withheld and allowlist enforced"
+
+  # The verifier must never be handed the executor's rationale at the call site.
+  # Match what a leak actually looks like in code, not the word "rationale"
+  # appearing in a comment that explains the rule.
+  h=$(grep -nE '(ctx|decision)\.rationale|rationale *=|"rationale"' verify/gate.py 2>/dev/null || true)
+  if [ -n "$h" ]; then bad "RULE 3 verify/gate.py passes the executor rationale onward:"; echo "$h" | sed 's/^/      /'
+  else pass "RULE 3 the gate never passes a rationale to the verifier"; fi
 else skip "RULE 3 verify/verifier.py not present yet (pre-Phase 3)"; fi
 
 # RULE 4 — no delta emission without a recorded baseline.
@@ -111,6 +137,14 @@ if [ -f agent/pipeline.py ]; then
   grep -q 'max_llm_calls_per_workflow' agent/pipeline.py || { bad "RULE 7 no per-workflow LLM-call budget"; miss=1; }
   grep -q 'retry_cap_exhausted'        agent/pipeline.py || { bad "RULE 7 retry exhaustion does not escalate"; miss=1; }
   [ "$miss" -eq 0 ] && pass "RULE 7 retry cap + LLM budget enforced, exhaustion escalates"
+
+  # Phase 3 added a second model call per attempt. It must draw on the same
+  # budget — a cap each caller enforces for itself is not a cap.
+  if [ -f verify/gate.py ]; then
+    if grep -q 'budget.reserve(' verify/gate.py; then
+      pass "RULE 7 the verifier call draws on the same workflow budget"
+    else bad "RULE 7 verify/gate.py calls a model without reserving budget"; fi
+  fi
 else skip "RULE 7 agent/pipeline.py not present yet (pre-Phase 2)"; fi
 
 # RULE 8 — no placeholder-data generators outside tests/.
@@ -121,8 +155,18 @@ if [ -f data/dataset_manifest.json ]; then pass "RULE 8 dataset_manifest.json pr
 else skip "RULE 8 data/dataset_manifest.json not present yet (pre-Phase 4 seeding)"; fi
 
 # RULE 9 — calibration and benchmark ID sets disjoint.
-if git ls-files 2>/dev/null | grep -qiE 'disjoint'; then pass "RULE 9 disjointness test present"
-else skip "RULE 9 disjointness test not present yet (pre-Phase 3)"; fi
+if [ -f verify/conformal.py ]; then
+  miss=0
+  grep -q 'def assert_disjoint_from' verify/conformal.py     || { bad "RULE 9 no disjointness guard on the calibration model"; miss=1; }
+  grep -q 'class LeakageError' verify/conformal.py     || { bad "RULE 9 leakage is not an error type"; miss=1; }
+  # A coverage number computed from an uncalibrated region is a claim the method
+  # never made; the metric must refuse it rather than report it.
+  grep -q 'NotCalibrated' verify/conformal.py     || { bad "RULE 9 metrics do not refuse uncalibrated regions"; miss=1; }
+  [ "$miss" -eq 0 ] && pass "RULE 9 disjointness enforced in code (fit, use and evaluate)"
+
+  if repo_files | grep -qiE 'disjoint'; then pass "RULE 9 disjointness test present"
+  else bad "RULE 9 no disjointness test"; fi
+else skip "RULE 9 verify/conformal.py not present yet (pre-Phase 3)"; fi
 
 # RULE 10 — every reported number cites a results file.
 if [ -f docs/results.md ]; then
@@ -132,6 +176,15 @@ if [ -f docs/results.md ]; then
   if [ -n "$h" ]; then bad "RULE 10 uncited metric lines in docs/results.md:"; echo "$h" | sed 's/^/      /'
   else pass "RULE 10 all reported numbers cite a results file"; fi
 else bad "RULE 10 docs/results.md missing"; fi
+
+# PRD §9 — "PROVIDED — DO NOT MODIFY" blocks must stay byte-identical.
+# Not one of the ten rules, but the primitives Rules 5, 6, 3 and 9 rest on. A
+# formatter silently reflowed these once; now it is checked.
+if [ -f scripts/check_provided_code.py ]; then
+  if out=$(python scripts/check_provided_code.py 2>&1); then
+    pass "PRD §9 provided code byte-identical to the PRD"
+  else bad "PRD §9 provided code has drifted:"; echo "$out" | sed 's/^/      /'; fi
+else skip "PRD §9 provided-code check not present"; fi
 
 echo
 if [ "$fail" -ne 0 ]; then echo "$(red 'RULE CHECK FAILED')"; exit 1; fi

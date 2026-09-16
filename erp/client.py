@@ -310,7 +310,20 @@ class ERPClient:
         return pe
 
     # --- reads the context assembler needs ---------------------------------------
-    def duplicate_bill_exists(self, supplier: str, bill_no: str, exclude: str = "") -> bool:
+    def duplicate_bill_exists(
+        self, supplier: str, bill_no: str, exclude: str = "", exclude_key: str = ""
+    ) -> bool:
+        """Has this supplier bill number already been invoiced by someone else?
+
+        ``exclude_key`` is load-bearing for crash recovery. If a worker died
+        after ERPNext accepted our Purchase Invoice but before Postgres recorded
+        the key, the resumed step re-enters S4 and finds *its own* orphaned
+        invoice sitting there under the same bill number. Counting that as a
+        duplicate turns a recoverable crash into a human escalation and stops
+        ``Pipeline._adopt_orphan`` from ever adopting the document (Rule 6). A
+        duplicate is another party's invoice for the same bill — never our own
+        half-committed write, which is identified by its idempotency key.
+        """
         rows = self.get_list(
             "Purchase Invoice",
             filters=[
@@ -319,7 +332,7 @@ class ERPClient:
                 ["docstatus", "=", 1],
                 ["name", "!=", exclude or "__none__"],
             ],
-            fields=["name"],
-            limit=1,
+            fields=["name", IDEMPOTENCY_FIELD],
+            limit=5,
         )
-        return bool(rows)
+        return any(str(r.get(IDEMPOTENCY_FIELD) or "") != exclude_key for r in rows)
