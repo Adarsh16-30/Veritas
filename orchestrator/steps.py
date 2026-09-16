@@ -6,6 +6,12 @@ proceeding means at each state. Keeping the two apart is what makes "no hardcode
 action map" a real property rather than a naming convention.
 
 Some states submit a document and move the GL; some are decision-only gates.
+
+Writes are **planned, not built**. A plan carries the doctype, the slot its
+result fills, and its idempotency key — all computable without touching ERPNext —
+plus a ``build`` thunk that constructs the actual document only when the write is
+really going to happen. That laziness is a Rule 6 requirement, not an
+optimisation: see :class:`PlannedWrite`.
 """
 
 from __future__ import annotations
@@ -14,49 +20,65 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from agent.context import ContextAssembler
+from agent.context import ContextAssembler, derived_key
 from agent.state import Step, StepContext
 from erp.client import ERPClient
-from erp.idempotent import idempotency_key
 
 
 @dataclass(frozen=True)
-class Write:
-    """One ERPNext submission: the doctype, the document, and where to file the
-    resulting document name in ``ctx.docs``."""
+class PlannedWrite:
+    """One ERPNext submission, described before it is constructed.
+
+    ``build`` is deferred because constructing a document is itself an ERPNext
+    call — ``make_purchase_invoice`` and friends map a source document into a
+    target — and after a partial commit those mappers can **fail outright**.
+
+    The case that proved it: a worker dies after the Purchase Invoice is
+    submitted but before Postgres records the key. On resume the Purchase Order
+    is already fully billed, so ``make_purchase_invoice`` has nothing left to
+    map and raises ``TypeError: unsupported operand type(s) for -: 'NoneType'
+    and 'float'``. Building eagerly meant that 500 happened before the resume
+    could notice the document it was about to rebuild already existed — the
+    retry cap then burned and a recoverable crash became a human escalation.
+
+    Key and doctype are known without ERPNext, so the committer can check
+    "already done?" first and only build what it actually needs to submit.
+    """
 
     doctype: str
-    doc: dict[str, Any]
     doc_slot: str
+    key: str
+    build: Callable[[], dict[str, Any]]
 
 
-#: A builder returns the write for this step, or None for a decision-only gate.
-Builder = Callable[[ERPClient, ContextAssembler, StepContext], "Write | None"]
-
-
-def _s1(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> Write:
+def _s1(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> PlannedWrite:
     s = asm.spec
-    return Write(
+    return PlannedWrite(
         "Material Request",
-        erp.material_request_doc(s.item_code, s.qty, s.needed_by, ctx.idempotency_key),
         "S1",
+        ctx.idempotency_key,
+        lambda: erp.material_request_doc(s.item_code, s.qty, s.needed_by, ctx.idempotency_key),
     )
 
 
-def _s3(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> Write:
+def _s3(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> PlannedWrite:
     s = asm.spec
-    return Write(
+    return PlannedWrite(
         "Purchase Order",
-        erp.purchase_order_doc(ctx.docs["S1"], s.supplier, s.rate, asm.today, ctx.idempotency_key),
         "S3",
+        ctx.idempotency_key,
+        lambda: erp.purchase_order_doc(
+            ctx.docs["S1"], s.supplier, s.rate, asm.today, ctx.idempotency_key
+        ),
     )
 
 
-def _s6(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> Write:
-    return Write(
+def _s6(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> PlannedWrite:
+    return PlannedWrite(
         "Payment Entry",
-        erp.payment_entry_doc(ctx.docs["S4_invoice"], asm.today, ctx.idempotency_key),
         "S6",
+        ctx.idempotency_key,
+        lambda: erp.payment_entry_doc(ctx.docs["S4_invoice"], asm.today, ctx.idempotency_key),
     )
 
 
@@ -65,39 +87,33 @@ def _gate(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> None:
     return None
 
 
-def derived_key(ctx: StepContext, part: str) -> str:
-    """A stable sub-key for a state that submits more than one document.
-
-    Derived from the step's own key with the provided primitive, so every key in
-    the system is a sha256 of a sorted payload and two sub-keys can never collide
-    with each other or with a plain step key (Rule 5).
-    """
-    return idempotency_key(
-        ctx.workflow_id, f"{ctx.step.value}:{part}", {"base": ctx.idempotency_key}
-    )
+#: A builder returns the planned write for this step, or None for a gate.
+Builder = Callable[[ERPClient, ContextAssembler, StepContext], "PlannedWrite | None"]
 
 
 #: S4 is the only state that submits two documents (receipt, then invoice) — the
 #: three-way match needs both to exist before it means anything.
-def s4_writes(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> list[Write]:
+def s4_writes(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> list[PlannedWrite]:
     s = asm.spec
+    receipt_key = derived_key(ctx, "receipt")
+    invoice_key = derived_key(ctx, "invoice")
     return [
-        Write(
+        PlannedWrite(
             "Purchase Receipt",
-            erp.purchase_receipt_doc(ctx.docs["S3"], asm.today, derived_key(ctx, "receipt")),
             "S4_receipt",
+            receipt_key,
+            lambda: erp.purchase_receipt_doc(ctx.docs["S3"], asm.today, receipt_key),
         ),
-        Write(
+        PlannedWrite(
             "Purchase Invoice",
-            erp.purchase_invoice_doc(
-                ctx.docs["S3"], s.bill_no, asm.today, derived_key(ctx, "invoice")
-            ),
             "S4_invoice",
+            invoice_key,
+            lambda: erp.purchase_invoice_doc(ctx.docs["S3"], s.bill_no, asm.today, invoice_key),
         ),
     ]
 
 
-def writes_for(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> list[Write]:
+def writes_for(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> list[PlannedWrite]:
     """Every ERPNext submission this state performs when the agent proceeds."""
     if ctx.step is Step.S4:
         return s4_writes(erp, asm, ctx)

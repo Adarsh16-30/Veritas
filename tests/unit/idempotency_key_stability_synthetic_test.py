@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from agent.context import UPSTREAM_SLOTS, ContextAssembler, WorkflowSpec
 from agent.state import Step, StepContext
+from erp.client import ERPClient
 
 SPEC = WorkflowSpec(
     workflow_id="wf-key",
@@ -73,3 +74,44 @@ def test_key_input_excludes_attempt_number() -> None:
     ctx3 = StepContext(workflow_id=SPEC.workflow_id, step=Step.S4, docs=dict(MID_RUN), attempt=3)
     asm = _assembler()
     assert asm._attempt_input(ctx1) == asm._attempt_input(ctx3)
+
+
+# --- our own in-flight write is not a duplicate of itself (Rule 6) -------------
+class _StubListing(ERPClient):
+    """An ERPClient whose only real behaviour is the listing `duplicate_bill_exists`
+    filters. Permitted here: `*_synthetic_test.py`, unit scope (Rule 1)."""
+
+    def __init__(self, rows: list[dict[str, object]]) -> None:  # noqa: D107
+        self.rows = rows
+
+    def get_list(self, *a: object, **kw: object) -> list[dict[str, object]]:
+        return self.rows
+
+
+def test_an_invoice_carrying_our_own_key_is_not_a_duplicate() -> None:
+    """The crash-recovery case.
+
+    A worker dies after ERPNext accepts our Purchase Invoice but before Postgres
+    records the key. The resumed step re-enters S4 and finds its own orphaned
+    invoice under the same supplier bill number. Counting that as a duplicate
+    escalates a recoverable crash to a human and stops `_adopt_orphan` from ever
+    adopting the document.
+    """
+    ours = "a" * 64
+    erp = _StubListing([{"name": "ACC-PINV-0001", "veritas_idempotency_key": ours}])
+    assert erp.duplicate_bill_exists("Acme", "BILL-1", exclude_key=ours) is False
+
+
+def test_another_partys_invoice_for_the_same_bill_is_still_a_duplicate() -> None:
+    erp = _StubListing([{"name": "ACC-PINV-0002", "veritas_idempotency_key": "b" * 64}])
+    assert erp.duplicate_bill_exists("Acme", "BILL-1", exclude_key="a" * 64) is True
+
+
+def test_an_unstamped_invoice_for_the_same_bill_is_a_duplicate() -> None:
+    """A document posted by a human in the ERPNext UI carries no key at all."""
+    erp = _StubListing([{"name": "ACC-PINV-0003", "veritas_idempotency_key": None}])
+    assert erp.duplicate_bill_exists("Acme", "BILL-1", exclude_key="a" * 64) is True
+
+
+def test_no_invoices_at_all_is_not_a_duplicate() -> None:
+    assert _StubListing([]).duplicate_bill_exists("Acme", "BILL-1", exclude_key="a" * 64) is False

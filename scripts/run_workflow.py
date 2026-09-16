@@ -1,11 +1,17 @@
-"""Run one baseline-agent workflow end to end against the real ERPNext.
+"""Run one workflow end to end against the real ERPNext.
 
-    uv run python scripts/run_workflow.py --workflow-id wf-001
+    uv run python scripts/run_workflow.py --workflow-id wf-001              # baseline
+    uv run python scripts/run_workflow.py --workflow-id wf-002 --verified   # three-gate
 
-Phase 2: no verification gate. Every action comes from a real model call
-(Rule 2); every write is idempotent (Rule 5); state is checkpointed before each
-side effect (Rule 6). Re-running the same ``--workflow-id`` resumes it and must
-not post a second document.
+Every action comes from a real model call (Rule 2); every write is idempotent
+(Rule 5); state is checkpointed before each side effect (Rule 6). Re-running the
+same ``--workflow-id`` resumes it and must not post a second document.
+
+``--verified`` is the only difference between PRD §5.2's two configurations.
+Without it this is the Phase 2 baseline — deliberately weak, and the denominator
+Rule 4 requires. With it, each step must additionally clear the deterministic
+rule engine, an independent verifier that never sees the executor's reasoning
+(Rule 3), and the conformal router.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ from erp.client import ERPClient  # noqa: E402
 from orchestrator.db import Store  # noqa: E402
 from orchestrator.machine import WorkflowMachine  # noqa: E402
 from trace.store import TraceLogger  # noqa: E402
+from verify.gate import build_gate  # noqa: E402
 
 load_dotenv()
 
@@ -54,6 +61,11 @@ def main() -> int:
     p.add_argument("--bill-no", default=None)
     p.add_argument("--tolerance", type=float, default=2.0)
     p.add_argument("--show-trace", action="store_true")
+    p.add_argument(
+        "--verified",
+        action="store_true",
+        help="run the Phase 3 three-gate pipeline instead of the Phase 2 baseline",
+    )
     args = p.parse_args()
 
     erp = ERPClient()
@@ -63,14 +75,27 @@ def main() -> int:
 
     spec = build_spec(args)
     llm = OllamaLLM()
-    print(f"executor model: {llm.name}   erp: {erp.url}")
+    gate = build_gate(erp, spec, executor_model=llm.name) if args.verified else None
+    config = "verified" if gate else "baseline"
+    print(f"config: {config}   executor model: {llm.name}   erp: {erp.url}")
+    if gate:
+        print(
+            f"verifier model: {gate.verifier.independence.verifier_model}"
+            f"   calibrated: {gate.calibrated}"
+        )
+        if not gate.calibrated:
+            print(
+                "  no calibration artifact — the conformal router is UNCALIBRATED"
+                " and makes no coverage claim; all three gates must agree to"
+                " commit. Run scripts/calibrate.py once labels exist (Rule 9)."
+            )
     print(
         f"workflow: {spec.workflow_id}  {spec.qty} x {spec.item_code} @ {spec.rate}"
         f" from {spec.supplier}  (expected total {spec.expected_total})"
     )
 
     with Store() as store:
-        machine = WorkflowMachine(store, erp, spec, Executor(llm))
+        machine = WorkflowMachine(store, erp, spec, Executor(llm), gate=gate)
         outcome = machine.run(spec.workflow_id)
 
         for r in outcome.steps:
@@ -81,6 +106,15 @@ def main() -> int:
                 f"  {r.step.value}  {r.action.value if r.action else '-':<9}"
                 f" {mark:<7} {r.latency_ms:>6} ms  attempts={r.attempts}{doc}{reason}"
             )
+        if gate:
+            print("\ngate verdicts:")
+            for a in store.attempts_for(spec.workflow_id):
+                if a["verdict"] is None:
+                    continue
+                print(
+                    f"  {a['step']}#{a['attempt']}  verifier={a['verdict']}"
+                    f"  confidence={a['confidence']}  region={a['region']}"
+                )
         if outcome.skipped:
             print(f"  resumed: skipped already-committed {[s.value for s in outcome.skipped]}")
 

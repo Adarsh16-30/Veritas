@@ -11,6 +11,8 @@ dependencies = [
     "pydantic>=2.7",
     "python-dotenv>=1.0",
     "tenacity>=9.0",
+    # PRD §2.4: the rule engine's invariants are declarative YAML.
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]
@@ -19,6 +21,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.10",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.uv]
@@ -36,6 +39,10 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
+# PRD §9.1 is reproduced byte-for-byte, combined `import hashlib, json` and all.
+# Silencing the rules is correct here; rewriting provided code to please a linter
+# is not.
+"erp/idempotent.py" = ["I001", "E401"]
 
 # `trace/` is mandated by PRD §11 and shadows the stdlib `trace` module. It
 # resolves correctly (repo root precedes the stdlib on sys.path) but isort would

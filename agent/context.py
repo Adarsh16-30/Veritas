@@ -74,6 +74,22 @@ def _d(value: object) -> Decimal:
     return Decimal(str(value or 0))
 
 
+def derived_key(ctx: StepContext, part: str) -> str:
+    """A stable sub-key for a step that submits more than one document.
+
+    Derived from the step's own key through the provided primitive, so every key
+    in the system is a sha256 of a sorted payload and two sub-keys can never
+    collide with each other or with a plain step key (Rule 5).
+
+    It lives here rather than in ``orchestrator/steps.py`` because the
+    ContextAssembler needs it too: S4 must be able to tell its own orphaned
+    invoice apart from a genuine duplicate bill.
+    """
+    return idempotency_key(
+        ctx.workflow_id, f"{ctx.step.value}:{part}", {"base": ctx.idempotency_key}
+    )
+
+
 class ContextAssembler:
     def __init__(self, erp: ERPClient, spec: WorkflowSpec) -> None:
         self.erp = erp
@@ -82,13 +98,15 @@ class ContextAssembler:
 
     # --- public ---------------------------------------------------------------
     def assemble(self, ctx: StepContext) -> None:
+        # The key is derived first: it is a function of this step's *inputs*, and
+        # S4 needs it during assembly to recognise its own in-flight write.
+        ctx.idempotency_key = idempotency_key(
+            ctx.workflow_id, ctx.step.value, self._attempt_input(ctx)
+        )
         builder = self._BUILDERS[ctx.step]
         facts, summary, amount = builder(self, ctx)
         ctx.facts = facts
         ctx.amount_at_stake = amount
-        ctx.idempotency_key = idempotency_key(
-            ctx.workflow_id, ctx.step.value, self._attempt_input(ctx)
-        )
         ctx.step_context = self._render(ctx, summary, facts)
 
     # --- the semantic identity of this step's write (Rule 5) -------------------
@@ -196,7 +214,10 @@ class ContextAssembler:
         variance = invoiced_total - po_total
         pct = (abs(variance) / po_total * 100) if po_total else Decimal("0")
         tolerance = Decimal(str(s.tolerance_pct))
-        duplicate = self.erp.duplicate_bill_exists(s.supplier, s.bill_no)
+        # Our own in-flight invoice is not a duplicate of itself (Rule 6).
+        duplicate = self.erp.duplicate_bill_exists(
+            s.supplier, s.bill_no, exclude_key=derived_key(ctx, "invoice")
+        )
 
         summary = {
             "purchase_order": po["name"],
