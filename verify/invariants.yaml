@@ -14,6 +14,9 @@
 # `expr` states what must be TRUE to proceed. The invariant is violated when it
 # evaluates false. A name that is not a fact of that step is a load-time error,
 # never a silent pass.
+#
+# Every boolean fact is phrased as a check that passed (True == satisfied), so
+# these expressions read as plain assertions rather than as double negatives.
 
 version: 1
 
@@ -40,7 +43,7 @@ invariants:
 
   - id: S2_WITHIN_APPROVAL_AUTHORITY
     step: S2
-    expr: not over_approval_threshold
+    expr: within_approval_threshold
     message: "estimated total exceeds the delegated approval threshold; a human must authorise it"
     kind: budget
 
@@ -78,7 +81,7 @@ invariants:
 
   - id: S4_NO_DUPLICATE_BILL
     step: S4
-    expr: not duplicate_bill_no
+    expr: bill_no_not_previously_invoiced
     message: "a submitted invoice already exists for this supplier bill number"
     kind: duplicate_guard
 
@@ -91,7 +94,7 @@ invariants:
 
   - id: S5_NO_OPEN_DISCREPANCY
     step: S5
-    expr: not discrepancy_open
+    expr: no_open_discrepancy
     message: "an unresolved price discrepancy remains open against the purchase order"
     kind: tolerance
 
@@ -104,7 +107,7 @@ invariants:
 
   - id: S6_NOT_ALREADY_PAID
     step: S6
-    expr: not already_paid
+    expr: not_previously_paid
     message: "a submitted payment entry already exists for this invoice"
     kind: duplicate_guard
 

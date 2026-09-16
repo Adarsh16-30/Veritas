@@ -56,11 +56,11 @@ def _ctx(step: Step = Step.S6, **kw: object) -> StepContext:
         "STEP: S6 — release payment against the matched invoice\n"
         "purchase_invoice: ACC-PINV-2026-00007\n"
         "outstanding_amount: 50.00\n"
-        "DELTA: outstanding=50.00, already_paid=False, invoice_submitted=True"
+        "DELTA: outstanding=50.00, not_previously_paid=True, invoice_submitted=True"
     )
     ctx.proposed_action = Action.PROCEED
     ctx.rationale = RATIONALE
-    ctx.facts = {"already_paid": False, "invoice_submitted": True}
+    ctx.facts = {"not_previously_paid": True, "invoice_submitted": True}
     for k, v in kw.items():
         setattr(ctx, k, v)
     return ctx

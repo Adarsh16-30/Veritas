@@ -270,7 +270,15 @@ class ERPClient:
             it["cost_center"] = self.cost_center
         return po
 
-    def purchase_receipt_doc(self, purchase_order: str, today: str, key: str) -> dict[str, Any]:
+    def purchase_receipt_doc(
+        self, purchase_order: str, today: str, key: str, received_qty: float | None = None
+    ) -> dict[str, Any]:
+        """Build the receipt for a purchase order.
+
+        ``received_qty`` posts a delivery that differs from what was ordered — a
+        real short or over delivery, which is the condition a three-way match
+        exists to catch. ``None`` receives exactly what was ordered.
+        """
         pr: dict[str, Any] = self.call(
             "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt",
             source_name=purchase_order,
@@ -279,11 +287,26 @@ class ERPClient:
         pr[IDEMPOTENCY_FIELD] = key
         for it in pr["items"]:
             it["warehouse"] = self.warehouse
+            if received_qty is not None:
+                it["qty"] = received_qty
+                it["received_qty"] = received_qty
         return pr
 
     def purchase_invoice_doc(
-        self, purchase_order: str, bill_no: str, today: str, key: str
+        self,
+        purchase_order: str,
+        bill_no: str,
+        today: str,
+        key: str,
+        invoiced_qty: float | None = None,
+        invoiced_rate: float | None = None,
     ) -> dict[str, Any]:
+        """Build the supplier invoice for a purchase order.
+
+        ``invoiced_qty`` / ``invoiced_rate`` post an invoice that disagrees with
+        the order — a real overbill or short bill. ``None`` bills exactly the
+        ordered quantity at the agreed rate.
+        """
         pi: dict[str, Any] = self.call(
             "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice",
             source_name=purchase_order,
@@ -293,6 +316,13 @@ class ERPClient:
         pi["posting_date"] = today
         pi["update_stock"] = 0
         pi[IDEMPOTENCY_FIELD] = key
+        for it in pi.get("items", []):
+            if invoiced_qty is not None:
+                it["qty"] = invoiced_qty
+            if invoiced_rate is not None:
+                it["rate"] = invoiced_rate
+                it.pop("price_list_rate", None)
+                it.pop("amount", None)
         return pi
 
     def payment_entry_doc(self, purchase_invoice: str, today: str, key: str) -> dict[str, Any]:

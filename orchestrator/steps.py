@@ -102,13 +102,22 @@ def s4_writes(erp: ERPClient, asm: ContextAssembler, ctx: StepContext) -> list[P
             "Purchase Receipt",
             "S4_receipt",
             receipt_key,
-            lambda: erp.purchase_receipt_doc(ctx.docs["S3"], asm.today, receipt_key),
+            lambda: erp.purchase_receipt_doc(
+                ctx.docs["S3"], asm.today, receipt_key, received_qty=s.received_qty
+            ),
         ),
         PlannedWrite(
             "Purchase Invoice",
             "S4_invoice",
             invoice_key,
-            lambda: erp.purchase_invoice_doc(ctx.docs["S3"], s.bill_no, asm.today, invoice_key),
+            lambda: erp.purchase_invoice_doc(
+                ctx.docs["S3"],
+                s.bill_no,
+                asm.today,
+                invoice_key,
+                invoiced_qty=s.received_qty,
+                invoiced_rate=s.invoice_rate,
+            ),
         ),
     ]
 
