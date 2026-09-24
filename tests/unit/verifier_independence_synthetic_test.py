@@ -60,25 +60,41 @@ def _ctx(step: Step = Step.S6, **kw: object) -> StepContext:
     )
     ctx.proposed_action = Action.PROCEED
     ctx.rationale = RATIONALE
-    ctx.facts = {"not_previously_paid": True, "invoice_submitted": True}
+    ctx.facts = {
+        "not_previously_paid": True,
+        "invoice_submitted": True,
+        "within_approved_authority": True,
+    }
     for k, v in kw.items():
         setattr(ctx, k, v)
     return ctx
 
 
+#: Every scripted reply below answers the S6 checklist, so its length is the
+#: length of that checklist -- not the literal 3 it happened to be when these
+#: tests were written.
+S6_ITEMS = len(CHECKLIST[Step.S6])
+
+
 def _checks(*satisfied: bool, confidence: float = 0.8) -> dict[str, object]:
-    """A well-formed grounded-checklist answer, one entry per expectation."""
+    """A well-formed reply. Unspecified expectations default to satisfied.
+
+    Padding rather than requiring every caller to spell out all of them keeps
+    each test naming only the items it actually cares about.
+    """
+    flags = list(satisfied) + [True] * (S6_ITEMS - len(satisfied))
+    assert len(flags) == S6_ITEMS, "more answers than the checklist has items"
     return {
         "checks": [
             {"n": i, "evidence": f"fact_{i}=True", "satisfied": ok}
-            for i, ok in enumerate(satisfied, start=1)
+            for i, ok in enumerate(flags, start=1)
         ],
         "confidence": confidence,
     }
 
 
 def _ok_reply(**kw: object) -> dict[str, object]:
-    return _checks(True, True, True) | kw
+    return _checks() | kw
 
 
 # --- the payload (PRD §9.4) ----------------------------------------------------
@@ -260,10 +276,10 @@ def test_every_checklist_expectation_is_answerable_from_the_delta_facts() -> Non
         json.dumps({"confidence": 0.5}),
         json.dumps({"checks": [], "confidence": 0.5}),
         json.dumps({"checks": [{"n": 1, "satisfied": True}], "confidence": 0.5}),
-        json.dumps({"checks": [{"n": 1, "satisfied": "yes"}] * 3, "confidence": 0.5}),
-        json.dumps({"checks": ["nope"] * 3, "confidence": 0.5}),
-        json.dumps(_checks(True, True, True, confidence=1.4)),
-        json.dumps({"checks": [{"n": 1, "satisfied": True}] * 3, "confidence": "high"}),
+        json.dumps({"checks": [{"n": 1, "satisfied": "yes"}] * S6_ITEMS, "confidence": 0.5}),
+        json.dumps({"checks": ["nope"] * S6_ITEMS, "confidence": 0.5}),
+        json.dumps(_checks(confidence=1.4)),
+        json.dumps({"checks": [{"n": 1, "satisfied": True}] * S6_ITEMS, "confidence": "high"}),
     ],
     ids=[
         "non-json",
@@ -296,9 +312,8 @@ def test_duplicate_checklist_index_cannot_silently_skip_an_expectation() -> None
     """
     exploit = {
         "checks": [
-            {"n": 1, "evidence": "invoice_submitted=True", "satisfied": True},
-            {"n": 1, "evidence": "invoice_submitted=True", "satisfied": True},
-            {"n": 1, "evidence": "invoice_submitted=True", "satisfied": True},
+            {"n": 1, "evidence": "invoice_submitted=True", "satisfied": True}
+            for _ in range(S6_ITEMS)
         ],
         "confidence": 0.9,
     }
@@ -312,7 +327,7 @@ def test_checklist_answers_out_of_order_are_rejected_even_without_duplicates() -
         "checks": [
             {"n": 2, "evidence": "x", "satisfied": True},
             {"n": 1, "evidence": "y", "satisfied": True},
-            {"n": 3, "evidence": "z", "satisfied": True},
+            *[{"n": i, "evidence": "z", "satisfied": True} for i in range(3, S6_ITEMS + 1)],
         ],
         "confidence": 0.9,
     }
@@ -323,7 +338,7 @@ def test_checklist_answers_out_of_order_are_rejected_even_without_duplicates() -
 
 def test_a_non_integer_n_is_rejected_rather_than_silently_repositioned() -> None:
     bad_n = {
-        "checks": [{"n": "one", "evidence": "x", "satisfied": True}] * 3,
+        "checks": [{"n": "one", "evidence": "x", "satisfied": True}] * S6_ITEMS,
         "confidence": 0.9,
     }
     llm = ScriptedLLM(bad_n)
@@ -332,7 +347,7 @@ def test_a_non_integer_n_is_rejected_rather_than_silently_repositioned() -> None
 
 
 def test_answers_in_correct_order_still_pass() -> None:
-    ordered = _checks(True, True, True)
+    ordered = _checks()
     llm = ScriptedLLM(ordered)
     call = Verifier(llm, executor_model=EXECUTOR_MODEL).verify(_ctx())
     assert call.verdict.passed is True
@@ -342,7 +357,9 @@ def test_answers_omitting_n_entirely_still_work_by_position() -> None:
     """`n` is redundant, not required — the prompt already asks for answers in
     order, and position alone is sufficient once trusted as authoritative."""
     no_n = {
-        "checks": [{"evidence": "x", "satisfied": ok} for ok in (True, False, True)],
+        "checks": [
+            {"evidence": "x", "satisfied": ok} for ok in [True, False] + [True] * (S6_ITEMS - 2)
+        ],
         "confidence": 0.9,
     }
     llm = ScriptedLLM(no_n)

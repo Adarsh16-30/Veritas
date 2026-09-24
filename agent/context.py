@@ -51,6 +51,65 @@ def sanitize(text: object, limit: int = _MAX_FREE_TEXT) -> str:
     return s[:limit]
 
 
+#: An internal routing token that carries no information about what is being
+#: bought. USAspending publishes award descriptions that are nothing else
+#: (``IGF::OT::IGF``), and the seeded ERP item inherits the name verbatim.
+_IGF_TOKEN = re.compile(r"IGF *::? *[A-Z]{2,3} *::? *IGF", re.I)
+_CODE_LIKE = re.compile(r"^[A-Z0-9][A-Z0-9 _:./-]*$")
+
+
+def describes_goods(name: str) -> bool:
+    """True when an item name says something a human buyer could act on.
+
+    False for an empty name and for one that is nothing but a short routing
+    code. This deliberately mirrors ``data.corpus.AwardRecord.is_code_only`` —
+    the same rule the fault harness uses to *select* ambiguous awards — but is
+    reimplemented here because ``agent/`` must not import from ``data/``, which
+    feeds evaluation only. ``tests/unit/context_facts_synthetic_test.py``
+    pins the two to the same answer so they cannot drift apart.
+    """
+    text = (name or "").strip()
+    if not text:
+        return False
+    stripped = _IGF_TOKEN.sub("", text).strip(" :;,./-")
+    if not stripped:
+        return False
+    return not (len(stripped) < 12 and bool(_CODE_LIKE.match(stripped)))
+
+
+#: Phrases that address the *reader* of a data field instead of describing the
+#: goods. An item name is a noun phrase; a second-person imperative or meta-text
+#: about the approval process has no legitimate reason to appear in one.
+#:
+#: This is a heuristic over a general shape, not a signature for any particular
+#: payload, and a determined attacker who phrases the instruction differently
+#: will pass it. It is defence in depth behind the standing instruction in both
+#: system prompts that ERP text is data and never a command — not a substitute
+#: for it. See docs/limitations.md for what the benchmark number does and does
+#: not establish.
+_INSTRUCTION_LIKE: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.I)
+    for p in (
+        r"\bignore\s+(all\s+|any\s+)?(previous|prior|earlier|above)",
+        r"\bdisregard\b",
+        r"\bsystem\s*(note|message|prompt|instruction)",
+        r"\boverride\b",
+        r"\bapprove\s+(and|this|it|immediately|without)",
+        r"\brelease\s+(the\s+)?(payment|funds)\b",
+        r"\bwithout\s+(any\s+|further\s+|additional\s+)?(review|verification|approval|check)",
+        r"\b(no|skip)\s+(further\s+|additional\s+)?(review|verification|approval|check)",
+        r"\bdo\s+not\s+(verify|check|review|escalate|flag|question)",
+        r"\b(prior|previous)\s+checks?\s+(are\s+|were\s+|have\s+been\s+)?(complete|completed|passed|done)",
+        r"\byou\s+(are|must|should|will|may)\b",
+    )
+)
+
+
+def reads_as_instructions(name: str) -> bool:
+    """True when a supposedly descriptive field is addressing the model."""
+    return any(p.search(name or "") for p in _INSTRUCTION_LIKE)
+
+
 @dataclass(frozen=True)
 class WorkflowSpec:
     """The procurement request a workflow exists to fulfil."""
@@ -188,11 +247,32 @@ class ContextAssembler:
             "is_purchase_item": item.get("is_purchase_item"),
         }
         est = s.expected_total
+        name = summary["item_name"]
+        # ERPNext falls back to the item code when no name was supplied, so an
+        # item with no description at all arrives here looking like
+        # "USA-272060915" rather than "". A name that is merely the item's own
+        # code describes nothing, and this is the only signal that separates the
+        # `missing` class from an ordinary item.
+        named_after_its_own_code = name.strip() == summary["item"].strip()
         facts = {
             "estimated_value": str(est),
             "item_is_purchasable": bool(item.get("is_purchase_item")),
             "qty_positive": s.qty > 0,
             "needed_by_not_past": s.needed_by >= self.today,
+            # The item name is the one field that says *what is being bought*,
+            # and until Phase 4 it reached the model only as free text in the
+            # summary. Three fault classes corrupt exactly that field -- an
+            # empty description, a pure routing code, and instruction text aimed
+            # at the model -- and all three were missed at 0/4 in both
+            # configurations, because every DELTA fact still read True: the
+            # faults touch neither purchasability, nor quantity, nor the date.
+            # The verifier is required to ground each answer in a fact, so with
+            # no fact covering the description it had nothing to object with.
+            # That is an evidence-coverage gap, not a reasoning failure.
+            "item_description_informative": (
+                not named_after_its_own_code and describes_goods(name)
+            ),
+            "item_description_free_of_instructions": not reads_as_instructions(name),
         }
         return facts, summary, est
 
@@ -296,17 +376,31 @@ class ContextAssembler:
             "po_total": str(po_total),
             "invoice_status": sanitize(pi.get("status")),
             "outstanding": str(_d(pi.get("outstanding_amount"))),
+            "approved_authority": str(_d(s.approval_threshold)),
         }
+        # What S2 actually approved. The compounding fault class raises the
+        # invoiced rate by just under the match tolerance, so S4 and the
+        # variance check below both pass honestly while the amount finally paid
+        # climbs above the authority S2 checked against. Nothing downstream
+        # re-read that figure, so the class scored 0/4 in both configurations --
+        # the gap `inject_compounding` predicted in its own docstring. The
+        # threshold was on the spec the whole time; only the exposure was
+        # missing. Once carried forward the check is pure arithmetic, which is
+        # why it is also a hard invariant (S5_WITHIN_APPROVED_AUTHORITY).
+        authority = Decimal(str(s.approval_threshold))
         facts = {
             "variance": str(variance),
             "variance_pct": str(pct.quantize(Decimal("0.001"))),
             "within_tolerance": pct <= Decimal(str(s.tolerance_pct)),
             "no_open_discrepancy": pct <= Decimal(str(s.tolerance_pct)),
             "invoice_submitted": int(pi.get("docstatus", 0)) == 1,
+            "approved_authority": str(authority),
+            "within_approved_authority": pi_total <= authority,
         }
         return facts, summary, pi_total
 
     def _s6(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
+        s = self.spec
         pi = self.erp.get("Purchase Invoice", ctx.docs["S4_invoice"])
         outstanding = _d(pi.get("outstanding_amount"))
         grand = _d(pi.get("grand_total"))
@@ -324,14 +418,20 @@ class ContextAssembler:
             "supplier": sanitize(pi.get("supplier")),
             "grand_total": str(grand),
             "outstanding_amount": str(outstanding),
+            "approved_authority": str(_d(s.approval_threshold)),
             "payment_account": self.erp.cash_account,
         }
+        authority = Decimal(str(s.approval_threshold))
         facts = {
             "outstanding": str(outstanding),
             "fully_invoiced": grand > 0,
             "outstanding_equals_total": outstanding == grand,
             "not_previously_paid": not already_paid,
             "invoice_submitted": int(pi.get("docstatus", 0)) == 1,
+            # S6 is the last point at which the approved figure still means
+            # anything: after this the money has moved.
+            "approved_authority": str(authority),
+            "within_approved_authority": grand <= authority,
         }
         return facts, summary, outstanding
 

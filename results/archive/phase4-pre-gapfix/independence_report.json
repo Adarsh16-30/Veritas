@@ -1,0 +1,19 @@
+{
+  "commit": "9284c80bd6fbdae365aab6c7f844d97f81692ac5",
+  "distinct_model_family": true,
+  "ev_corr": null,
+  "ev_corr_available": false,
+  "ev_corr_n": 92,
+  "ev_corr_undefined_reason": "the executor proposed commit on every known-wrong step, so the phi coefficient has a constant variable and is undefined by definition",
+  "generated_at": "2026-09-16T16:48:03+00:00",
+  "model_pairs": [
+    "llama3 -> qwen2.5-coder"
+  ],
+  "overall_agreement_rate": 0.9567,
+  "paired_steps": 277,
+  "payload_leaks": [],
+  "verifier_caught_count": 12,
+  "verifier_disagreement_n": 92,
+  "verifier_disagreement_on_known_wrong": 0.13043478260869565,
+  "verifier_payload_clean": true
+}

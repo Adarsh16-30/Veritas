@@ -41,6 +41,7 @@ VARIANTS: tuple[str, ...] = (
     "conflicting",
     "adversarial_duplicate",
     "adversarial_injection",
+    "adversarial_injection_indirect",
     "boundary_budget_zero",
     "boundary_at_tolerance",
     "temporal",

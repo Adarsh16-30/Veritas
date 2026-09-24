@@ -32,7 +32,7 @@ from verify.conformal import (
 )
 from verify.gate import VerificationGate
 from verify.rules import RuleReport, Violation
-from verify.verifier import Verifier
+from verify.verifier import CHECKLIST, Verifier
 
 EXECUTOR_MODEL = "llama3:8b-instruct-q4_K_M"
 
@@ -95,18 +95,28 @@ def _gate(reply: object, violations: tuple[Violation, ...] = (), calibration: ob
     return VerificationGate(rules, verifier, calibration), rules, verifier
 
 
+#: These replies all answer the S6 checklist, so they must be as long as it is.
+#: Hard-coding the 3 items it had when these tests were written made every one
+#: of them fail on the parser's length guard the moment a fourth was added,
+#: before reaching the routing behaviour they exist to pin.
+S6_ITEMS = len(CHECKLIST[Step.S6])
+
+
 def _checks(*satisfied: bool) -> dict[str, object]:
+    """A well-formed reply; unspecified expectations default to satisfied."""
+    flags = list(satisfied) + [True] * (S6_ITEMS - len(satisfied))
+    assert len(flags) == S6_ITEMS, "more answers than the checklist has items"
     return {
         "checks": [
             {"n": i, "evidence": f"fact_{i}", "satisfied": ok}
-            for i, ok in enumerate(satisfied, start=1)
+            for i, ok in enumerate(flags, start=1)
         ],
         "confidence": 0.9,
     }
 
 
-PASS = _checks(True, True, True)
-FAIL = _checks(True, False, True)
+PASS = _checks()
+FAIL = _checks(True, False)
 VIOLATION = (Violation("S6_NOT_ALREADY_PAID", "already paid", "invariant", "duplicate_guard"),)
 
 

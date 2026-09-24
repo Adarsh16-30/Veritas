@@ -128,22 +128,33 @@ def ensure_supplier(erp: ERPClient, name: str) -> None:
     )
 
 
-def ensure_item(erp: ERPClient, record: AwardRecord, item_name: str | None = None) -> None:
+def ensure_item(
+    erp: ERPClient,
+    record: AwardRecord,
+    item_name: str | None = None,
+    item_code: str | None = None,
+) -> None:
     """Create the line item and give it the company defaults the buying chain needs.
 
     ``item_name`` overrides the description — used only by the harness to inject
     a fault into the item master itself, never to improve on the real data.
+
+    ``item_code`` seeds the award under a different code. The harness uses it so
+    an injected item belongs to exactly one workflow: writing a payload onto the
+    award's own code poisons the item for every other workflow drawing that
+    award, permanently, because the ERP keeps it between runs.
     """
+    code = item_code or record.item_code
     name = item_name if item_name is not None else record.item_name
-    if not erp.exists("Item", [["name", "=", record.item_code]]):
+    if not erp.exists("Item", [["name", "=", code]]):
         erp.insert(
             "Item",
             {
-                "item_code": record.item_code,
+                "item_code": code,
                 # ERPNext requires a non-empty item_name; an award with no
                 # description gets its own code, which is exactly as
                 # uninformative as the source record is.
-                "item_name": name or record.item_code,
+                "item_name": name or code,
                 "description": record.description or "",
                 "item_group": "All Item Groups",
                 "stock_uom": "Nos",
@@ -152,9 +163,9 @@ def ensure_item(erp: ERPClient, record: AwardRecord, item_name: str | None = Non
             },
         )
     elif item_name is not None:
-        erp.update("Item", record.item_code, {"item_name": name or record.item_code})
+        erp.update("Item", code, {"item_name": name or code})
 
-    item = erp.get("Item", record.item_code)
+    item = erp.get("Item", code)
     defaults: list[dict[str, Any]] = item.get("item_defaults", [])
     row = next((d for d in defaults if d.get("company") == erp.company), None)
     if row is None:
@@ -167,7 +178,7 @@ def ensure_item(erp: ERPClient, record: AwardRecord, item_name: str | None = Non
     }
     if any(row.get(k) != v for k, v in wanted.items()):
         row.update(wanted)
-        erp.update("Item", record.item_code, {"item_defaults": defaults})
+        erp.update("Item", code, {"item_defaults": defaults})
 
 
 def _expense_account(erp: ERPClient) -> str:
