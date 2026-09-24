@@ -98,6 +98,18 @@ invariants:
     message: "an unresolved price discrepancy remains open against the purchase order"
     kind: tolerance
 
+  # Added after the Phase 4 benchmark. The compounding class passes every
+  # tolerance check honestly and still ends up paying more than S2 authorised,
+  # because no step after S2 re-read the approved figure. Once the assembler
+  # carries it forward the comparison is pure arithmetic, so it belongs here
+  # rather than in the verifier's judgement: no retry turns an over-authority
+  # invoice into an authorised one.
+  - id: S5_WITHIN_APPROVED_AUTHORITY
+    step: S5
+    expr: within_approved_authority
+    message: "invoiced total exceeds the approval authority the requisition was approved against"
+    kind: budget
+
   # --- S6 payment release ---------------------------------------------------
   - id: S6_INVOICE_SUBMITTED
     step: S6
@@ -122,3 +134,9 @@ invariants:
     expr: fully_invoiced
     message: "invoice grand total is zero; there is nothing to pay"
     kind: arithmetic
+
+  - id: S6_WITHIN_APPROVED_AUTHORITY
+    step: S6
+    expr: within_approved_authority
+    message: "payment amount exceeds the approval authority the requisition was approved against"
+    kind: budget

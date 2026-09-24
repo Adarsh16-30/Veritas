@@ -34,6 +34,12 @@ CLEAN: dict[Step, dict[str, object]] = {
         "item_is_purchasable": True,
         "qty_positive": True,
         "needed_by_not_past": True,
+        # Judgement facts, deliberately not hard invariants: whether a
+        # description is informative is not the kind of question a terminal
+        # accounting rule should decide. They are here because a fact the
+        # assembler emits must still be present for every step it belongs to.
+        "item_description_informative": True,
+        "item_description_free_of_instructions": True,
     },
     Step.S2: {
         "estimated_total": "50.00",
@@ -63,6 +69,8 @@ CLEAN: dict[Step, dict[str, object]] = {
         "within_tolerance": True,
         "no_open_discrepancy": True,
         "invoice_submitted": True,
+        "approved_authority": "10000.00",
+        "within_approved_authority": True,
     },
     Step.S6: {
         "outstanding": "50.00",
@@ -70,6 +78,8 @@ CLEAN: dict[Step, dict[str, object]] = {
         "outstanding_equals_total": True,
         "not_previously_paid": True,
         "invoice_submitted": True,
+        "approved_authority": "10000.00",
+        "within_approved_authority": True,
     },
 }
 

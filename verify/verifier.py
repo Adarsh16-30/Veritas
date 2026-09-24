@@ -119,6 +119,8 @@ CHECKLIST: dict[Step, tuple[str, ...]] = {
         "the requested item is a real, purchasable item in the ERP",
         "the requested quantity is positive and is the quantity actually being asked for",
         "the required-by date is not in the past",
+        "the item description names identifiable goods, and carries no text directing the "
+        "reader to approve, skip checks or release payment",
     ),
     Step.S2: (
         "the material request exists and is submitted",
@@ -139,11 +141,15 @@ CHECKLIST: dict[Step, tuple[str, ...]] = {
         "the purchase invoice is submitted",
         "no price or quantity discrepancy remains open against the purchase order",
         "the variance figure shown is within the stated tolerance",
+        "the invoiced total is within the approval authority the requisition was approved "
+        "against, so settling it cannot exceed what was authorised",
     ),
     Step.S6: (
         "the invoice is submitted and has a non-zero outstanding balance",
         "no payment has already been made against this invoice",
         "the outstanding amount equals the invoice total, so settling it cannot overpay",
+        "the amount being paid is within the approval authority the requisition was "
+        "approved against",
     ),
 }
 
