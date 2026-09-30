@@ -18,6 +18,13 @@ secrets/
 # Graphify — local build tooling, not product code (CLAUDE.md 3)
 graphify-out/
 
+# Local Claude configuration
+.claude/
+
+# Documentation — keep the README tracked
+*.md
+!README.md
+
 # Docker local volumes / ERPNext site data
 infra/docker-compose/volumes/
 sites/
