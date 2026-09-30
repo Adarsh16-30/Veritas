@@ -18,6 +18,10 @@ secrets/
 # Graphify — local build tooling, not product code (docs/ENGINEERING_RULES.md 3)
 graphify-out/
 
+# Documentation — keep the README tracked
+*.md
+!README.md
+
 # Docker local volumes / ERPNext site data
 infra/docker-compose/volumes/
 sites/
