@@ -27,7 +27,7 @@ from dotenv import load_dotenv  # noqa: E402
 
 from agent.context import WorkflowSpec  # noqa: E402
 from agent.executor import Executor, OllamaLLM  # noqa: E402
-from erp.client import ERPClient  # noqa: E402
+from erp.scoped import agent_client, describe  # noqa: E402
 from orchestrator.db import Store  # noqa: E402
 from orchestrator.machine import WorkflowMachine  # noqa: E402
 from trace.store import TraceLogger  # noqa: E402
@@ -68,7 +68,7 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    erp = ERPClient()
+    erp = agent_client()
     if not erp.ping():
         print(f"ERPNext not reachable at {erp.url}", file=sys.stderr)
         return 1
@@ -77,7 +77,7 @@ def main() -> int:
     llm = OllamaLLM()
     gate = build_gate(erp, spec, executor_model=llm.name) if args.verified else None
     config = "verified" if gate else "baseline"
-    print(f"config: {config}   executor model: {llm.name}   erp: {erp.url}")
+    print(f"config: {config}   executor model: {llm.name}   erp: {erp.url} ({describe(erp)})")
     if gate:
         print(
             f"verifier model: {gate.verifier.independence.verifier_model}"

@@ -98,6 +98,13 @@ class Pipeline:
 
     # --- one step ---------------------------------------------------------------
     def run_step(self, ctx: StepContext) -> StepResult:
+        # Least privilege (PRD Phase 6): every ERPNext call this step makes --
+        # context reads, the rule gate's ledger reads, the commit -- runs under
+        # this step's scope. A no-op on a single-identity client; see erp/scoped.py.
+        with self.erp.acting_for(ctx.step.value):
+            return self._run_step(ctx)
+
+    def _run_step(self, ctx: StepContext) -> StepResult:
         started = time.monotonic()
         last_error: str | None = None
         budget = WorkflowBudget(self.db, ctx.workflow_id, self.policy.max_llm_calls_per_workflow)
