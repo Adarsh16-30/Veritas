@@ -512,16 +512,14 @@ rather than being engineered around.
 
 ### Phase 5 — trace explorer
 
-- **Fact provenance is declared, not recorded.** The trace store keeps each
-  fact's value and the documents committed so far, but not which document a
-  fact was computed from. `trace/provenance.py` declares that mapping and the
-  explorer resolves it at read time, which is what lets it work on runs
-  recorded before Phase 5. A unit test runs every `ContextAssembler` builder
-  and fails if a fact or a document read is missing from the table, so drift
-  is caught — but the link is still an inference from code, not a record
-  written when the decision was made. Recording sources at assembly time is the
-  stronger design; it was deferred so as not to touch `agent/` while the v4
-  benchmark run is still in flight.
+- **Fact provenance was declared, not recorded, until evidence version 2.**
+  `trace/provenance.py` declares which documents each fact is computed from,
+  and a unit test pins that table to the builders. From evidence version 2 the
+  assembler also *records* every ERPNext read it makes (`erp_reads` in the
+  trace), and the explorer marks each declared source as read, not read (a
+  visible disagreement), or unknown. Every run recorded before that — all of
+  b4/v4 and the archive — has no recorded reads, so for those the link is still
+  an inference from code, and the explorer says so on each attempt.
 - **Some facts are not from an ERPNext document, and the explorer says so.**
   Quantities, rates, tolerances and the approval threshold come from the
   procurement request the workflow was started with. The `out:` document a
@@ -552,14 +550,17 @@ rather than being engineered around.
 
 ### Phase 6 — hardening and observability (partial)
 
-- **Injection hardening is not done.** The PRD asks for untrusted ERPNext text
-  to be sanitized before it enters any model context, and for the
-  embedded-instruction class to be shown defended. Any real defence changes
-  what the executor and verifier see, which is the same kind of change that
-  forced the v4 re-run (Rule 4), so it was deliberately not made while v4 is in
-  flight. It needs its own b5/v5 run. Until then the only measured evidence is
-  Phase 4's, including the caveat that the direct injection variant largely
-  measures the `reads_as_instructions` heuristic.
+- **Injection hardening is built but not yet measured.** From evidence
+  version 2, every ERP-sourced string in a step context is quarantined in
+  `«…»`, so a payload cannot close its own quote and no newline lets it start a
+  line of its own. Both system prompts say that marked text is data, never
+  instructions, and never evidence. Unit tests prove the *structure*: every
+  ERP string is quoted at every step, and breakout attempts fail. Whether the
+  models therefore resist injection is an empirical question that only the
+  b5/v5 run answers, on **both** injection variants. `reads_as_instructions`
+  was deliberately not widened (CLAUDE.md 6.4.1), so any gain on the indirect
+  variant has to come from the models reading the marking, not from the
+  heuristic. Until b5/v5 exists, no injection-defence claim is made.
 - **Server-side least privilege is unverified.** The local scope guard is unit
   tested and enforced by `check_rules.sh`. That ERPNext itself refuses the
   buyer identity Payment Entry access depends on the live role configuration.
@@ -587,4 +588,43 @@ rather than being engineered around.
 - **The ≥ 50 concurrent workflows target (PRD §1) is still unexercised.** The
   load test that would scrape these counters under 4 workers needs the live
   stack.
+
+### Evidence version 2 — what changed, and two diagnoses
+
+- **`boundary_at_tolerance` was mislabelled once in four, and the agent was
+  right.** The injector rounded the invoice to the nearest cent. For
+  `b4-bench-boundary_at_tolerance-01` (rate 24169.80) that gave 2.000017%,
+  displayed as `2.000` but compared as a breach, so `within_tolerance=False`.
+  The baseline **held at S4, which was correct**, and was scored wrong
+  against a "proceed" label. Its recorded 3/4 on this class is therefore 4/4
+  correct behaviour. Any v4 workflow drawing the same record carries the same
+  label error, equally in both configurations. The injector now rounds down
+  (evidence version 2); a test runs the real S4 builder over every corpus
+  record. Recorded b4/v4 numbers are left exactly as measured (Rule 10) and
+  this note is the correction.
+- **`temporal` 0/4 in the b4 baseline is executor blindness, not a corpus or
+  ERP problem.** All four baseline workflows proceeded at every step on the
+  first attempt, so ERPNext accepted the back-dated requisition. The fault
+  surfaces only as `needed_by_not_past=False` at S1, no invariant covers it
+  (by design, `rule_detectable=False`), and the baseline executor did not act
+  on a failed fact. The pre-gap-fix verified run caught it 4/4 through the S1
+  checklist. Confirming the fact value per trace is a one-click check in the
+  explorer; it has not been done against the real store.
+- **Evidence versions are a manual convention.** `bench/conditions.py` must be
+  bumped by hand whenever a change alters model inputs or the corpus.
+  `bench.run` refuses to resume, and `bench.report` and the chart refuse a
+  delta, across versions. But nothing can detect a change that should have
+  bumped the version and didn't. Review is the control.
+
+### Phase 6 load test and Phase 7 demo
+
+- **The load driver has only run with synthetic workflows.** `bench/load.py`
+  was tested against a real Redis with 50 synthetic workflows on 4 workers:
+  each ran exactly once, and concurrency was bounded at 4 and reached it. The
+  real run needs the stack. On the development machine (two ~5 GB models, ~5 GB
+  free RAM) model calls serialise, so the PRD's p95 < 45 s is not expected to
+  hold under load. The driver reports p95 as measured either way, with queue
+  wait separated from service time.
+- **The demo is n = 1 per class.** `bench/demo.py` says so in its output and
+  writes only to `results/demo/`. It is a walkthrough, not evidence.
 

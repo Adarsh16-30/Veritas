@@ -82,6 +82,31 @@ them, and the record already holds every retry and escalation. Benchmark
 series carry `run="incomplete"` while a run is being resumed and a
 `veritas_bench_info` series names the results file and commit (Rule 10).
 
+## Experimental conditions (Rule 4)
+
+`bench/conditions.py`. Every results file records its `evidence_version`
+(bumped by hand when a change alters what the models see or how the corpus is
+built) and its `erp_access`. `bench.run --resume` refuses to continue a run
+under different conditions, and also refuses a fresh run on a tag already in
+the store, or a resume into another run's file. `bench.report` and
+`bench.plots` refuse a delta across conditions. Version 1 is b4/v4; version 2
+adds untrusted-text quarantine, the boundary rounding fix and recorded ERP
+reads.
+
+## Injection hardening (Phase 6, evidence version 2)
+
+`agent.context.untrusted()` quarantines every ERP-sourced string in a step
+context in `«…»`, stripping the marks from inside the text first, and both
+system prompts say what the marking means. The DELTA facts are computed from
+raw values and are unchanged. Effectiveness is for the b5/v5 run to measure.
+
+## Load test and demo (Phases 6–7)
+
+`bench/load.py` drives N clean workflows through the Redis queue with W
+workers and checks Rules 5–7 under load. `bench/demo.py` (called by
+`scripts/run_demo.sh`) replays five fault classes through both configurations
+side by side: a demonstration, n = 1 per class.
+
 ## Least privilege (Phase 6)
 
 `erp/scoped.py`. With `ERPNEXT_BUYER_API_KEY` set, `agent_client()` returns a
