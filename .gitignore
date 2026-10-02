@@ -15,10 +15,10 @@ htmlcov/
 *.key
 secrets/
 
-# Graphify — local build tooling, not product code (CLAUDE.md 3)
+# Graphify — local build tooling, not product code
 graphify-out/
 
-# Local Claude configuration
+# Local agent configuration
 .claude/
 
 # Documentation — keep the README tracked
