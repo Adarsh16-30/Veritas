@@ -1,31 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420" font-family="system-ui, sans-serif">
-<rect width="720" height="420" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="470" viewBox="0 0 900 470" font-family="system-ui, sans-serif">
+<rect width="900" height="470" fill="#ffffff"/>
 <text x="70" y="24" font-size="15" font-weight="600" fill="#111827">Compounding-failure curve</text>
-<line x1="70" y1="365.0" x2="570" y2="365.0" stroke="#e5e7eb" stroke-width="1"/>
-<text x="60" y="369.0" font-size="11" fill="#6b7280" text-anchor="end">0%</text>
-<line x1="70" y1="283.8" x2="570" y2="283.8" stroke="#e5e7eb" stroke-width="1"/>
-<text x="60" y="287.8" font-size="11" fill="#6b7280" text-anchor="end">25%</text>
-<line x1="70" y1="202.5" x2="570" y2="202.5" stroke="#e5e7eb" stroke-width="1"/>
-<text x="60" y="206.5" font-size="11" fill="#6b7280" text-anchor="end">50%</text>
-<line x1="70" y1="121.2" x2="570" y2="121.2" stroke="#e5e7eb" stroke-width="1"/>
-<text x="60" y="125.2" font-size="11" fill="#6b7280" text-anchor="end">75%</text>
-<line x1="70" y1="40.0" x2="570" y2="40.0" stroke="#e5e7eb" stroke-width="1"/>
-<text x="60" y="44.0" font-size="11" fill="#6b7280" text-anchor="end">100%</text>
-<text x="70.0" y="385.0" font-size="11" fill="#6b7280" text-anchor="middle">S1</text>
-<text x="170.0" y="385.0" font-size="11" fill="#6b7280" text-anchor="middle">S2</text>
-<text x="270.0" y="385.0" font-size="11" fill="#6b7280" text-anchor="middle">S3</text>
-<text x="370.0" y="385.0" font-size="11" fill="#6b7280" text-anchor="middle">S4</text>
-<text x="470.0" y="385.0" font-size="11" fill="#6b7280" text-anchor="middle">S5</text>
-<text x="570.0" y="385.0" font-size="11" fill="#6b7280" text-anchor="middle">S6</text>
-<text x="320.0" y="404" font-size="12" fill="#374151" text-anchor="middle">steps completed correctly (k)</text>
-<polyline points="70.0,137.5 170.0,205.8 270.0,253.5 370.0,287.0 470.0,310.4 570.0,326.8" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-dasharray="6 5"/><circle cx="70.0" cy="137.5" r="3.5" fill="#9ca3af"/><circle cx="170.0" cy="205.8" r="3.5" fill="#9ca3af"/><circle cx="270.0" cy="253.5" r="3.5" fill="#9ca3af"/><circle cx="370.0" cy="287.0" r="3.5" fill="#9ca3af"/><circle cx="470.0" cy="310.4" r="3.5" fill="#9ca3af"/><circle cx="570.0" cy="326.8" r="3.5" fill="#9ca3af"/>
-<polyline points="70.0,170.0 170.0,170.0 270.0,170.0 370.0,178.1 470.0,210.6 570.0,210.6" fill="none" stroke="#b45309" stroke-width="2.5"/><circle cx="70.0" cy="170.0" r="3.5" fill="#b45309"/><circle cx="170.0" cy="170.0" r="3.5" fill="#b45309"/><circle cx="270.0" cy="170.0" r="3.5" fill="#b45309"/><circle cx="370.0" cy="178.1" r="3.5" fill="#b45309"/><circle cx="470.0" cy="210.6" r="3.5" fill="#b45309"/><circle cx="570.0" cy="210.6" r="3.5" fill="#b45309"/>
-<polyline points="70.0,137.5 170.0,137.5 270.0,137.5 370.0,145.6 470.0,178.1 570.0,178.1" fill="none" stroke="#1d4ed8" stroke-width="2.5"/><circle cx="70.0" cy="137.5" r="3.5" fill="#1d4ed8"/><circle cx="170.0" cy="137.5" r="3.5" fill="#1d4ed8"/><circle cx="270.0" cy="137.5" r="3.5" fill="#1d4ed8"/><circle cx="370.0" cy="145.6" r="3.5" fill="#1d4ed8"/><circle cx="470.0" cy="178.1" r="3.5" fill="#1d4ed8"/><circle cx="570.0" cy="178.1" r="3.5" fill="#1d4ed8"/>
-<line x1="584" y1="54" x2="610" y2="54" stroke="#9ca3af" stroke-width="2.5"/>
-<text x="616" y="58" font-size="11" fill="#374151">independent-failure reference (p^k)</text>
-<line x1="584" y1="76" x2="610" y2="76" stroke="#b45309" stroke-width="2.5"/>
-<text x="616" y="80" font-size="11" fill="#374151">baseline (no gate)</text>
-<line x1="584" y1="98" x2="610" y2="98" stroke="#1d4ed8" stroke-width="2.5"/>
-<text x="616" y="102" font-size="11" fill="#374151">verified (three gates)</text>
-<text x="70" y="418" font-size="10" fill="#9ca3af">measured; see docs/results.md for citations and docs/limitations.md for caveats</text>
+<line x1="70" y1="378.0" x2="630" y2="378.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="60" y="382.0" font-size="11" fill="#6b7280" text-anchor="end">0%</text>
+<line x1="70" y1="300.0" x2="630" y2="300.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="60" y="304.0" font-size="11" fill="#6b7280" text-anchor="end">25%</text>
+<line x1="70" y1="222.0" x2="630" y2="222.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="60" y="226.0" font-size="11" fill="#6b7280" text-anchor="end">50%</text>
+<line x1="70" y1="144.0" x2="630" y2="144.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="60" y="148.0" font-size="11" fill="#6b7280" text-anchor="end">75%</text>
+<line x1="70" y1="66.0" x2="630" y2="66.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="60" y="70.0" font-size="11" fill="#6b7280" text-anchor="end">100%</text>
+<text x="70.0" y="398.0" font-size="11" fill="#6b7280" text-anchor="middle">S1</text>
+<text x="182.0" y="398.0" font-size="11" fill="#6b7280" text-anchor="middle">S2</text>
+<text x="294.0" y="398.0" font-size="11" fill="#6b7280" text-anchor="middle">S3</text>
+<text x="406.0" y="398.0" font-size="11" fill="#6b7280" text-anchor="middle">S4</text>
+<text x="518.0" y="398.0" font-size="11" fill="#6b7280" text-anchor="middle">S5</text>
+<text x="630.0" y="398.0" font-size="11" fill="#6b7280" text-anchor="middle">S6</text>
+<text x="350.0" y="418.0" font-size="12" fill="#374151" text-anchor="middle">steps completed correctly (k)</text>
+<polyline points="70.0,159.6 182.0,225.1 294.0,271.0 406.0,303.1 518.0,325.6 630.0,341.3" fill="none" stroke="#9ca3af" stroke-width="2.5" stroke-dasharray="6 5"/><circle cx="70.0" cy="159.6" r="3.5" fill="#9ca3af"/><circle cx="182.0" cy="225.1" r="3.5" fill="#9ca3af"/><circle cx="294.0" cy="271.0" r="3.5" fill="#9ca3af"/><circle cx="406.0" cy="303.1" r="3.5" fill="#9ca3af"/><circle cx="518.0" cy="325.6" r="3.5" fill="#9ca3af"/><circle cx="630.0" cy="341.3" r="3.5" fill="#9ca3af"/>
+<polyline points="70.0,190.8 182.0,190.8 294.0,190.8 406.0,198.6 518.0,229.8 630.0,229.8" fill="none" stroke="#b45309" stroke-width="2.5"/><circle cx="70.0" cy="190.8" r="3.5" fill="#b45309"/><circle cx="182.0" cy="190.8" r="3.5" fill="#b45309"/><circle cx="294.0" cy="190.8" r="3.5" fill="#b45309"/><circle cx="406.0" cy="198.6" r="3.5" fill="#b45309"/><circle cx="518.0" cy="229.8" r="3.5" fill="#b45309"/><circle cx="630.0" cy="229.8" r="3.5" fill="#b45309"/>
+<polyline points="70.0,159.6 182.0,159.6 294.0,159.6 406.0,167.4 518.0,198.6 630.0,198.6" fill="none" stroke="#1d4ed8" stroke-width="2.5"/><circle cx="70.0" cy="159.6" r="3.5" fill="#1d4ed8"/><circle cx="182.0" cy="159.6" r="3.5" fill="#1d4ed8"/><circle cx="294.0" cy="159.6" r="3.5" fill="#1d4ed8"/><circle cx="406.0" cy="167.4" r="3.5" fill="#1d4ed8"/><circle cx="518.0" cy="198.6" r="3.5" fill="#1d4ed8"/><circle cx="630.0" cy="198.6" r="3.5" fill="#1d4ed8"/>
+<line x1="644" y1="80" x2="670" y2="80" stroke="#9ca3af" stroke-width="2.5"/>
+<text x="676" y="84" font-size="11" fill="#374151">independent-failure reference (p^k)</text>
+<line x1="644" y1="102" x2="670" y2="102" stroke="#b45309" stroke-width="2.5"/>
+<text x="676" y="106" font-size="11" fill="#374151">baseline (no gate)</text>
+<line x1="644" y1="124" x2="670" y2="124" stroke="#1d4ed8" stroke-width="2.5"/>
+<text x="676" y="128" font-size="11" fill="#374151">verified (three gates)</text>
+<text x="70" y="436" font-size="10" fill="#6b7280">baseline: results/archive/phase4-pre-gapfix/baseline_results.json @ 9284c80bd6fb</text>
+<text x="70" y="449" font-size="10" fill="#6b7280">verified: results/archive/phase4-pre-gapfix/verified_results.json @ 9284c80bd6fb</text>
+<text x="70" y="462" font-size="10" fill="#6b7280">every number is cited in docs/results.md</text>
 </svg>

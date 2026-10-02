@@ -24,13 +24,15 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from bench.conditions import differences, recorded  # noqa: E402
 from bench.metrics import summarise  # noqa: E402
+from bench.report import missing_workflows  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 CAPS = {"baseline": 18, "verified": 36}
 
-W, H = 720, 420
-PAD_L, PAD_R, PAD_T, PAD_B = 70, 150, 40, 55
+W, H = 900, 470
+PAD_L, PAD_R, PAD_T, PAD_B = 70, 270, 66, 92
 PLOT_W, PLOT_H = W - PAD_L - PAD_R, H - PAD_T - PAD_B
 
 BASELINE_COLOUR = "#b45309"
@@ -67,7 +69,16 @@ def _polyline(points: list[float], colour: str, dashed: bool = False) -> str:
     )
 
 
-def render_svg(baseline: list[float] | None, verified: list[float] | None, caption: str) -> str:
+def _esc(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def render_svg(
+    baseline: list[float] | None,
+    verified: list[float] | None,
+    caption: str,
+    warnings: list[str] | None = None,
+) -> str:
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
         f'viewBox="0 0 {W} {H}" font-family="system-ui, sans-serif">',
@@ -75,6 +86,13 @@ def render_svg(baseline: list[float] | None, verified: list[float] | None, capti
         f'<text x="{PAD_L}" y="24" font-size="15" font-weight="600" fill="#111827">'
         "Compounding-failure curve</text>",
     ]
+    # A chart outlives the context it was drawn in. Whatever would make docs/
+    # results.md withhold its delta is written on the chart itself.
+    for i, warning in enumerate(warnings or []):
+        parts.append(
+            f'<text x="{PAD_L}" y="{42 + i * 14}" font-size="11" font-weight="600" '
+            f'fill="#b91c1c">{_esc(warning)}</text>'
+        )
 
     # axes and gridlines
     for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
@@ -93,7 +111,8 @@ def render_svg(baseline: list[float] | None, verified: list[float] | None, capti
             f'fill="#6b7280" text-anchor="middle">S{k}</text>'
         )
     parts.append(
-        f'<text x="{PAD_L + PLOT_W / 2:.1f}" y="{H - 16}" font-size="12" fill="#374151" '
+        f'<text x="{PAD_L + PLOT_W / 2:.1f}" y="{PAD_T + PLOT_H + 40:.1f}" font-size="12" '
+        'fill="#374151" '
         'text-anchor="middle">steps completed correctly (k)</text>'
     )
 
@@ -120,9 +139,48 @@ def render_svg(baseline: list[float] | None, verified: list[float] | None, capti
             f"{label}</text>"
         )
 
-    parts.append(f'<text x="{PAD_L}" y="{H - 2}" font-size="10" fill="#9ca3af">{caption}</text>')
+    # One citation per line: a source that is cut off is not a citation.
+    lines = caption.split("\n")
+    for i, line in enumerate(lines):
+        y = H - 8 - (len(lines) - 1 - i) * 13
+        parts.append(f'<text x="{PAD_L}" y="{y}" font-size="10" fill="#6b7280">{_esc(line)}</text>')
     parts.append("</svg>")
     return "\n".join(parts)
+
+
+def _rel(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def chart(
+    baseline: dict[str, Any] | None, verified: dict[str, Any] | None, results_dir: Path
+) -> str:
+    """The SVG, with its sources cited and its caveats on its face (Rule 10)."""
+    cites, warnings = [], []
+    for name, payload in (("baseline", baseline), ("verified", verified)):
+        if not payload:
+            continue
+        commit = str(payload.get("commit") or "uncommitted")[:12]
+        cites.append(f"{name}: {_rel(results_dir / f'{name}_results.json')} @ {commit}")
+        missing = missing_workflows(payload)
+        if missing:
+            total = len(payload.get("benchmark_ids", []))
+            warnings.append(
+                f"{name} run INCOMPLETE ({total - len(missing)}/{total}) — not a result"
+            )
+    if baseline and verified:
+        diff = differences(recorded(baseline), recorded(verified))
+        if diff:
+            warnings.append("CONDITIONS DIFFER — " + "; ".join(diff))
+    return render_svg(
+        _curve(summarise(baseline["results"], CAPS["baseline"])) if baseline else None,
+        _curve(summarise(verified["results"], CAPS["verified"])) if verified else None,
+        "\n".join([*cites, "every number is cited in docs/results.md"]),
+        warnings,
+    )
 
 
 def main() -> int:
@@ -135,26 +193,22 @@ def main() -> int:
     if not results_dir.is_absolute():
         results_dir = ROOT / results_dir
 
-    def load(name: str, cap: int) -> list[float] | None:
+    def load(name: str) -> dict[str, Any] | None:
         path = results_dir / name
-        if not path.exists():
-            return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return _curve(summarise(payload["results"], cap))
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
-    baseline = load("baseline_results.json", CAPS["baseline"])
-    verified = load("verified_results.json", CAPS["verified"])
-    if not baseline and not verified:
+    b_payload = load("baseline_results.json")
+    v_payload = load("verified_results.json")
+    if not b_payload and not v_payload:
         print("no results to plot — run bench.run first", file=sys.stderr)
         return 1
-
-    caption = "measured; see docs/results.md for citations and docs/limitations.md for caveats"
+    svg = chart(b_payload, v_payload, results_dir)
     out = Path(args.out)
     if not out.is_absolute():
         out = ROOT / out
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render_svg(baseline, verified, caption), encoding="utf-8")
-    print(f"wrote {out.relative_to(ROOT)}")
+    out.write_text(svg, encoding="utf-8")
+    print(f"wrote {_rel(out)}")
     return 0
 
 
