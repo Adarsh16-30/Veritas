@@ -1,0 +1,52 @@
+# VERITAS observability — Prometheus + Grafana (PRD §2.7, Phase 6).
+#
+# Separate from stack.yml so the ERPNext stack's memory budget is untouched.
+# The exporter runs on the host:
+#
+#   uv run python scripts/metrics_exporter.py
+#   docker compose -f infra/docker-compose/observability.yml up -d
+#
+# Grafana    -> http://localhost:3000   (anonymous viewer; admin / admin to edit)
+# Prometheus -> http://localhost:9090
+
+name: veritas-observability
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      # Docker Desktop resolves this already; Linux engines need the mapping.
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9090:9090"
+    mem_limit: 160m
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:10.4.5
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/veritas.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    mem_limit: 200m
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:

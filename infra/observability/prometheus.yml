@@ -1,0 +1,10 @@
+# Prometheus for VERITAS (PRD §2.7, Phase 6).
+# Scrapes scripts/metrics_exporter.py, which runs on the host next to the agent.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: veritas
+    static_configs:
+      - targets: ["host.docker.internal:9108"]
