@@ -23,10 +23,13 @@ the real ledger is a real duplicate invoice. See [`docs/limitations.md`](docs/li
 | 1 · Real environment foundation | complete |
 | 2 · Baseline agent (no verifier) | complete — `Pipeline(gate=None)` |
 | 3 · Verification gate | complete except ECE ≤ 0.05 (no calibration fitted yet) |
-| **4 · Fault-injection benchmark** | built; re-run after the evidence-coverage fix in progress |
-| 5 · Trace explorer | built — `scripts/trace_explorer.py` |
-| 6 · Hardening & observability | partial — metrics + Grafana dashboard + step-scoped ERP access built; injection hardening waits for v4 |
-| 7 · End-to-end demo & writeup | not started |
+| **4 · Fault-injection benchmark** | built; the v4 re-run (evidence version 1) is being completed |
+| 5 · Trace explorer | built — `scripts/trace_explorer.py`; records each step's ERP reads from evidence version 2 |
+| 6 · Hardening & observability | built, measurement pending — metrics + Grafana, step-scoped ERP access, untrusted-text quarantine, load-test driver; each needs a live run (see `docs/limitations.md`) |
+| 7 · End-to-end demo & writeup | demo built (`scripts/run_demo.sh`); writeup waits for measured v4/v5 numbers |
+
+Every number this project reports comes from a results file and is cited in
+[`docs/results.md`](docs/results.md); nothing on this page is a measurement.
 
 ## Quick start
 
@@ -151,6 +154,36 @@ uv run python scripts/generate_scoped_api_key.py --buyer   # S1–S3 identity, n
 With the buyer key in `.env`, S1–S3 run on an identity ERPNext refuses Payment
 Entry access, and every step may write only its own documents (`erp/scoped.py`).
 Without it the agent runs on the single scoped key, as before.
+
+## Demo
+
+```bash
+bash scripts/run_demo.sh
+```
+
+Brings up the stack, runs the hand-driven S1–S6 control, then replays five
+fault classes (clean, duplicate bill, compounding, back-dated, indirect
+injection) through the baseline and the verified configuration side by side,
+with trace-explorer links. It is a walkthrough, n = 1 per class, and says so.
+
+## Load test
+
+```bash
+uv run python -m bench.load --workflows 50 --workers 4 --config baseline --run-tag l1
+```
+
+Enqueues 50 workflows at once and drains them with 4 workers through the real
+queue and per-workflow lock (PRD §1). It reports latency, queue wait and
+throughput, and fails if any workflow ran twice, any document was committed
+twice, or any workflow broke its model-call cap.
+
+## Experimental conditions
+
+A delta is the gate's effect only if nothing else changed. Every results file
+records its `evidence_version` (`bench/conditions.py`, bumped whenever what
+the models see or how the corpus is built changes) and its ERP access model.
+`bench.run` will not resume a run under different conditions, or start one on
+a used run tag. The report and the chart will not compare across them.
 
 ## Repo layout
 
