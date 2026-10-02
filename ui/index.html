@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VERITAS trace explorer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">VERITAS</span>
+    <span class="subtitle">trace explorer · read-only</span>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <form id="filters" class="filters" autocomplete="off">
+        <input id="prefix" type="search" placeholder="workflow id prefix (e.g. v4-bench)" aria-label="Workflow id prefix">
+        <select id="status" aria-label="Status">
+          <option value="">any status</option>
+          <option value="completed">completed</option>
+          <option value="escalated">escalated</option>
+          <option value="in_progress">in progress</option>
+          <option value="committed">committed</option>
+          <option value="pending">pending</option>
+        </select>
+      </form>
+      <ul id="workflows" class="wf-list" aria-label="Workflows"></ul>
+    </aside>
+    <main id="main" class="main">
+      <p class="empty">Select a workflow to reconstruct what the agent saw, decided, and why.</p>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
