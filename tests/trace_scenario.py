@@ -472,3 +472,33 @@ def assert_verified_reconstruction(recon: dict[str, Any], wf: str, base: str) ->
     assert steps["S6"]["attempts"] == [] and steps["S6"]["checkpoint"] is None
 
     assert {d["doctype"] for d in recon["documents"]} == set(DOCTYPE.values())
+
+
+def _observability_rows(
+    self: MemoryStore,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Mirror of ``Store.observability_rows`` over the in-memory record."""
+    workflows = [
+        {k: w[k] for k in ("workflow_id", "status", "escalation_reason", "llm_calls")}
+        for w in self.workflows.values()
+    ]
+    attempts = []
+    for a in self.attempts.values():
+        gate = a.get("gate") or {}
+        attempts.append(
+            {
+                "workflow_id": a["workflow_id"],
+                "step": a["step"],
+                "attempt": a["attempt"],
+                "action": a["action"],
+                "committed": a["committed"],
+                "latency_ms": a["latency_ms"],
+                "route": gate.get("route"),
+                "verifier_latency_ms": gate.get("verifier_latency_ms"),
+                "gated": bool(gate),
+            }
+        )
+    return workflows, attempts
+
+
+MemoryStore.observability_rows = _observability_rows  # type: ignore[attr-defined]

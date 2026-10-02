@@ -1,0 +1,12 @@
+# The one datasource every dashboard panel uses. Its uid is pinned so panels
+# reference it explicitly; tests/unit/grafana_dashboard_synthetic_test.py fails
+# on any panel that does not (PRD Phase 6: no null-datasource panels).
+apiVersion: 1
+datasources:
+  - name: VERITAS Prometheus
+    uid: veritas-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

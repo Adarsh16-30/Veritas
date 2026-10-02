@@ -321,3 +321,20 @@ class Store:
             "SELECT step, status, ts FROM checkpoints WHERE workflow_id = %s ORDER BY step",
             (workflow_id,),
         ).fetchall()
+
+    # --- read-only queries for the metrics exporter (Phase 6) --------------------
+    def observability_rows(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Every workflow and every step attempt, in the few columns metrics need."""
+        workflows = self.conn.execute(
+            "SELECT workflow_id, status, escalation_reason, llm_calls FROM workflows"
+        ).fetchall()
+        attempts = self.conn.execute(
+            """
+            SELECT workflow_id, step, attempt, action, committed, latency_ms,
+                   gate->>'route'                         AS route,
+                   (gate->>'verifier_latency_ms')::float  AS verifier_latency_ms,
+                   gate <> '{}'::jsonb                    AS gated
+              FROM step_attempts
+            """
+        ).fetchall()
+        return workflows, attempts
