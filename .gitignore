@@ -23,7 +23,7 @@ graphify-out/
 
 # Documentation — keep the README tracked
 *.md
-!README.md
+!/README.md
 
 # Docker local volumes / ERPNext site data
 infra/docker-compose/volumes/
