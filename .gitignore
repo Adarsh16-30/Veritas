@@ -15,7 +15,7 @@ htmlcov/
 *.key
 secrets/
 
-# Graphify — local build tooling, not product code (docs/ENGINEERING_RULES.md 3)
+# Graphify — local build tooling, not product code
 graphify-out/
 
 # Documentation — keep the README tracked
