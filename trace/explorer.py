@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from agent.state import Step
-from trace.provenance import SLOT_DOCTYPE, doc_url, erp_base_url, fact_sources
+from trace.provenance import SLOT_DOCTYPE, doc_url, erp_base_url, fact_sources, list_url
 
 _STEP_ORDER = [s.value for s in Step]
 _DOCTYPE_SLOT = {doctype: slot for slot, doctype in SLOT_DOCTYPE.items()}
@@ -88,6 +88,7 @@ def known_documents(traces: list[dict[str, Any]], commits: list[dict[str, Any]])
 def _facts(
     step: str, provenance: dict[str, Any], docs: dict[str, str], step_context: str, base: str
 ) -> list[dict[str, Any]]:
+    reads = provenance.get("erp_reads")
     out: list[dict[str, Any]] = []
     for name, value in (provenance.get("facts") or {}).items():
         sources = fact_sources(step, name, docs=docs, step_context=step_context, base=base)
@@ -96,10 +97,30 @@ def _facts(
                 "name": name,
                 "value": value,
                 "check": _check(str(value)),
-                "sources": None if sources is None else [s.as_dict() for s in sources],
+                "sources": None
+                if sources is None
+                else [{**s.as_dict(), "read": was_read(s.as_dict(), reads)} for s in sources],
             }
         )
     return out
+
+
+def was_read(source: dict[str, Any], reads: list[dict[str, str]] | None) -> bool | None:
+    """Whether the recorded reads of this attempt include a declared source.
+
+    ``None`` when it cannot be said: traces from before reads were recorded, the
+    procurement request (not an ERPNext read), and documents this step itself
+    committed (written after the facts, never read for them). ``False`` is a
+    declared source the step did not read -- a disagreement between the
+    provenance table and the record, which the explorer shows rather than hides.
+    """
+    if reads is None or source["kind"] == "request" or "committed by this step" in source["label"]:
+        return None
+    if source["kind"] == "query":
+        return any(r.get("doctype") == source["doctype"] and "query" in r for r in reads)
+    return any(
+        r.get("doctype") == source["doctype"] and r.get("name") == source["name"] for r in reads
+    )
 
 
 def _call(trace: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -186,6 +207,18 @@ def reconstruct(
                     "amount_at_stake": prov.get("amount_at_stake"),
                     "idempotency_key": prov.get("idempotency_key"),
                     "facts": _facts(step, prov, docs, step_context, base),
+                    # None for traces recorded before reads were (evidence version 1).
+                    "erp_reads": None
+                    if prov.get("erp_reads") is None
+                    else [
+                        {
+                            **r,
+                            "url": doc_url(base, r["doctype"], r["name"])
+                            if r.get("name")
+                            else list_url(base, r["doctype"]),
+                        }
+                        for r in prov["erp_reads"]
+                    ],
                     "executor": _call(ex),
                     "verifier": _call(ver),
                     "action": (att or {}).get("action") or prov.get("action"),

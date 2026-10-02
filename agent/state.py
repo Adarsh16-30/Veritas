@@ -126,6 +126,11 @@ class StepContext:
     prompt: str | None = None
     raw_response: str | None = None
     rejection_reason: str | None = None
+    #: Every ERPNext read the ContextAssembler made for this attempt, in order:
+    #: ``{"doctype", "name"}`` for a document, ``{"doctype", "query"}`` for a
+    #: ledger-wide lookup. Recorded in the trace so a fact's provenance is a
+    #: record of what was read, not only an inference from code (Phase 5).
+    erp_reads: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass

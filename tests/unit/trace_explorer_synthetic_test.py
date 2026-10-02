@@ -128,3 +128,31 @@ def test_provenance_resolves_committed_outputs(store: MemoryStore) -> None:
     assert names == [None, DOCS["S1"]]
     item = next(f for f in s1["facts"] if f["name"] == "item_is_purchasable")
     assert item["sources"][0]["url"] == f"{BASE}/app/item/USA-272060915"
+
+
+def test_recorded_reads_confirm_or_contradict_the_declared_sources(store: MemoryStore) -> None:
+    recon = reconstruct(store, "v-1", base=BASE)
+    assert recon is not None
+    steps = {s["step"]: s for s in recon["steps"]}
+
+    s4 = steps["S4"]["attempts"][0]
+    assert [r["url"] for r in s4["erp_reads"]] == [
+        f"{BASE}/app/purchase-order/{DOCS['S3']}",
+        f"{BASE}/app/purchase-invoice",
+    ]
+    facts = {f["name"]: f for f in s4["facts"]}
+    po, receipt = facts["qty_match"]["sources"]
+    assert po["read"] is True  # read at this step
+    assert receipt["read"] is None  # committed by this step afterwards, never read
+    assert facts["bill_no_not_previously_invoiced"]["sources"][0]["read"] is True
+
+    # Reads recorded but empty: the table claims a source the record does not show.
+    s5 = steps["S5"]["attempts"][0]
+    auth = next(f for f in s5["facts"] if f["name"] == "within_approved_authority")
+    invoice, request = auth["sources"]
+    assert invoice["read"] is False and request["read"] is None
+
+    # A trace from before reads were recorded says nothing either way.
+    s1 = steps["S1"]["attempts"][0]
+    assert s1["erp_reads"] is None
+    assert all(src["read"] is None for f in s1["facts"] for src in (f["sources"] or []))
