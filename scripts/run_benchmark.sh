@@ -15,7 +15,14 @@
 #   6. reconcile the real ledger, then write the report and the plot
 #
 # Every run is resumable: workflows already committed are skipped (Rule 6), so
-# re-running after an interruption continues rather than starting over.
+# re-running after an interruption continues rather than starting over. Each
+# bench.run below passes --resume for that reason, and bench.run refuses to
+# resume into a results file that holds a different run tag.
+#
+# Run tags: a tag already used in the state store resumes the old workflows and
+# measures nothing. On a fresh clone the defaults are fine; on a store that has
+# seen earlier runs, set fresh tags, e.g.
+#   VERITAS_BASELINE_TAG=b5 VERITAS_VERIFIED_TAG=v5 VERITAS_CAL_TAG=c5 bash scripts/run_benchmark.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -37,11 +44,11 @@ fi
 
 step "2/6  baseline over the benchmark split (the Rule 4 denominator)"
 uv run python -m bench.run --config baseline --split benchmark \
-  --seed "$SEED" --run-tag "$BASE_TAG" --out results/baseline_results.json
+  --seed "$SEED" --run-tag "$BASE_TAG" --resume --out results/baseline_results.json
 
 step "3/6  verified over the calibration split (collects gate signals)"
 uv run python -m bench.run --config verified --split calibration \
-  --seed "$SEED" --run-tag "$CAL_TAG" --out results/calibration_run.json
+  --seed "$SEED" --run-tag "$CAL_TAG" --resume --out results/calibration_run.json
 
 step "4/6  fit the conformal router (Rule 9: benchmark-disjoint)"
 uv run python scripts/calibrate.py \
@@ -54,7 +61,7 @@ uv run python scripts/calibrate.py \
 
 step "5/6  verified over the benchmark split"
 uv run python -m bench.run --config verified --split benchmark \
-  --seed "$SEED" --run-tag "$VER_TAG" --out results/verified_results.json
+  --seed "$SEED" --run-tag "$VER_TAG" --resume --out results/verified_results.json
 
 step "6/6  reconcile the ledger, then report"
 uv run python -m bench.reconcile_ledger --out results/ledger_reconciliation.json || true
