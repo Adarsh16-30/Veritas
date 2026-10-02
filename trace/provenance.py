@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
+from agent.context import QUOTE_CLOSE, QUOTE_OPEN
 from agent.state import Step
 
 #: ERPNext doctype behind each document slot (``orchestrator/steps.py`` plans).
@@ -157,6 +158,10 @@ def summary_field(step_context: str, key: str) -> str | None:
         m = _SUMMARY_LINE.match(line)
         if m and m.group("key") == key:
             value = m.group("value").strip()
+            # Evidence version 2 quarantines ERP text in guillemets
+            # (agent.context.untrusted); earlier traces carry it bare.
+            if value.startswith(QUOTE_OPEN) and value.endswith(QUOTE_CLOSE):
+                value = value[1:-1].strip()
             return value or None
     return None
 

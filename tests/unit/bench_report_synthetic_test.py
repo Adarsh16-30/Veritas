@@ -91,3 +91,18 @@ def test_infrastructure_failures_count_as_not_yet_run() -> None:
 def test_default_results_dir_still_cites_results() -> None:
     out = render(_payload(IDS, IDS, "a" * 40), None, None)
     assert "[results: results/baseline_results.json]" in out
+
+
+def test_runs_under_different_conditions_get_no_delta() -> None:
+    baseline = _payload(IDS, IDS, "a" * 40)  # no fields: evidence_version 1
+    verified = {**_payload(IDS, IDS, "b" * 40), "evidence_version": 2}
+    out = render(baseline, verified, None)
+    assert "CONDITIONS DIFFER" in out and "evidence_version: 1 vs 2" in out
+    assert " pp |" not in out
+
+
+def test_same_conditions_still_compare() -> None:
+    baseline = {**_payload(IDS, IDS, "a" * 40), "evidence_version": 2}
+    verified = {**_payload(IDS, IDS, "b" * 40), "evidence_version": 2}
+    out = render(baseline, verified, None)
+    assert "CONDITIONS DIFFER" not in out and re.search(r"\| [+-]\d+\.\d pp \|", out)

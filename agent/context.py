@@ -51,6 +51,28 @@ def sanitize(text: object, limit: int = _MAX_FREE_TEXT) -> str:
     return s[:limit]
 
 
+#: Untrusted text is shown to both models inside these marks, and both system
+#: prompts say what they mean (PRD Phase 6, evidence version 2).
+QUOTE_OPEN, QUOTE_CLOSE = "\u00ab", "\u00bb"  # « »
+
+
+def untrusted(text: object) -> str:
+    """Quarantine ERP-sourced free text before it reaches any model context.
+
+    ``sanitize`` already strips control characters, collapses every newline (so
+    the text cannot start a line of its own, such as a fake ``DELTA:``) and caps
+    the length. This marks *where it begins and ends*: before, an injected
+    instruction arrived as an ordinary ``key: value`` line, indistinguishable
+    from the rest of the evidence. The marks are removed from inside the text
+    first, so a payload cannot close its own quotation and continue as evidence.
+
+    This changes presentation only. The DELTA facts, and therefore what the rule
+    engine and the verifier's checklist judge, are computed from the raw values.
+    """
+    body = sanitize(text).replace(QUOTE_OPEN, "").replace(QUOTE_CLOSE, "")
+    return f"{QUOTE_OPEN}{body}{QUOTE_CLOSE}"
+
+
 #: An internal routing token that carries no information about what is being
 #: bought. USAspending publishes award descriptions that are nothing else
 #: (``IGF::OT::IGF``), and the seeded ERP item inherits the name verbatim.
@@ -232,7 +254,8 @@ class ContextAssembler:
         delta = ", ".join(f"{k}={v}" for k, v in facts.items())
         lines.append(f"DELTA: {delta}")
         if ctx.rejection_reason:
-            lines.append(f"PREVIOUS ATTEMPT REJECTED: {sanitize(ctx.rejection_reason)}")
+            # A rejection can quote an ERP error, which can quote document text.
+            lines.append(f"PREVIOUS ATTEMPT REJECTED: {untrusted(ctx.rejection_reason)}")
         return "\n".join(lines)
 
     # --- per-step assembly ------------------------------------------------------
@@ -242,8 +265,8 @@ class ContextAssembler:
         code = sanitize(item.get("item_code"))
         name = sanitize(item.get("item_name"))
         summary = {
-            "item": code,
-            "item_name": name,
+            "item": untrusted(code),
+            "item_name": untrusted(name),
             "qty_requested": s.qty,
             "needed_by": s.needed_by,
             "is_purchase_item": item.get("is_purchase_item"),
@@ -283,7 +306,7 @@ class ContextAssembler:
         est = s.expected_total
         summary = {
             "material_request": mr["name"],
-            "mr_status": sanitize(mr.get("status")),
+            "mr_status": untrusted(mr.get("status")),
             "qty": s.qty,
             "estimated_total": str(est),
             "approval_threshold": s.approval_threshold,
@@ -304,7 +327,7 @@ class ContextAssembler:
         total = s.expected_total
         summary = {
             "material_request": mr["name"],
-            "supplier": sanitize(supplier.get("supplier_name")),
+            "supplier": untrusted(supplier.get("supplier_name")),
             "supplier_disabled": supplier.get("disabled"),
             "qty": s.qty,
             "unit_rate": s.rate,
@@ -344,7 +367,7 @@ class ContextAssembler:
             "po_total": str(po_total),
             "po_qty": str(po_qty),
             "receipt_qty": str(received_qty),
-            "supplier_bill_no": sanitize(s.bill_no),
+            "supplier_bill_no": untrusted(s.bill_no),
             "ordered_rate": str(_d(s.rate)),
             "invoiced_rate": str(_d(s.billed_rate)),
             "invoice_total": str(invoiced_total),
@@ -375,7 +398,7 @@ class ContextAssembler:
             "purchase_invoice": pi["name"],
             "invoice_total": str(pi_total),
             "po_total": str(po_total),
-            "invoice_status": sanitize(pi.get("status")),
+            "invoice_status": untrusted(pi.get("status")),
             "outstanding": str(_d(pi.get("outstanding_amount"))),
             "approved_authority": str(_d(s.approval_threshold)),
         }
@@ -416,7 +439,7 @@ class ContextAssembler:
         )
         summary = {
             "purchase_invoice": pi["name"],
-            "supplier": sanitize(pi.get("supplier")),
+            "supplier": untrusted(pi.get("supplier")),
             "grand_total": str(grand),
             "outstanding_amount": str(outstanding),
             "approved_authority": str(_d(s.approval_threshold)),

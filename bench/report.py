@@ -24,6 +24,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from bench.conditions import differences, recorded  # noqa: E402
 from bench.metrics import summarise  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -176,6 +177,24 @@ def render(
             "",
         ]
 
+    # Rule 4: a delta is the gate's effect only if nothing else changed between
+    # the two runs. Different evidence (context, prompts, corpus) or a different
+    # ERP access model makes it a comparison of two experiments.
+    mismatch = differences(recorded(baseline), recorded(verified)) if baseline and verified else []
+    if mismatch:
+        lines += [
+            "## CONDITIONS DIFFER — no delta reported",
+            "",
+            "The baseline and verified runs were recorded under different conditions "
+            "(`bench/conditions.py`):",
+            "",
+            *[f"- {d}" for d in mismatch],
+            "",
+            "Each configuration's own numbers follow, but the comparison between them would "
+            "not isolate the verification gate, so it is not computed.",
+            "",
+        ]
+
     if not baseline:
         lines += [
             "## Rule 4",
@@ -200,7 +219,8 @@ def render(
     for key, metric, label in rows:
         b = b_sum.get(key) if b_sum else None
         v = v_sum.get(key) if v_sum else None
-        delta = _delta(v, b) if (b_sum and v_sum and not incomplete) else "n/a"
+        comparable = b_sum and v_sum and not incomplete and not mismatch
+        delta = _delta(v, b) if comparable else "n/a"
         lines.append(f"| {label} [metric: {metric}] | {_pct(b)} | {_pct(v)} | {delta} | {cites}")
     lines.append("")
 

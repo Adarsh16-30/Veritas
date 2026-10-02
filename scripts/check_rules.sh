@@ -96,6 +96,17 @@ if [ -f bench/run.py ]; then
   else bad "RULE 4 bench/run.py does not reference baseline_results.json"; fi
 else skip "RULE 4 bench/run.py not present yet (pre-Phase 4)"; fi
 
+# RULE 4 — a delta compares one change, so each run records the conditions it ran
+# under, a resume may not mix them, and the report will not compare across them.
+if [ -f bench/conditions.py ]; then
+  miss=0
+  grep -q '^EVIDENCE_VERSION = [0-9]' bench/conditions.py || { bad "RULE 4 no EVIDENCE_VERSION in bench/conditions.py"; miss=1; }
+  grep -q 'resume_conflict(prior, conditions)' bench/run.py || { bad "RULE 4 bench.run resumes without comparing recorded conditions"; miss=1; }
+  grep -q '\*\*conditions,' bench/run.py || { bad "RULE 4 bench.run does not record its conditions in the results file"; miss=1; }
+  grep -q 'differences(recorded(baseline), recorded(verified))' bench/report.py || { bad "RULE 4 bench.report compares runs without checking their conditions"; miss=1; }
+  [ "$miss" -eq 0 ] && pass "RULE 4 runs record their conditions; resume and report refuse to mix them"
+fi
+
 # RULE 5 — idempotent side effects.
 if [ -f erp/idempotent.py ]; then
   miss=0

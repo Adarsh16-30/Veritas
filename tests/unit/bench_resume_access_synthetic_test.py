@@ -1,19 +1,29 @@
-"""bench.run refuses to resume a run under a different ERP access model (Rule 4)."""
+"""bench.run refuses to resume or start a run that would mix conditions (Rule 4)."""
 
 from __future__ import annotations
 
+from bench.conditions import EVIDENCE_VERSION
 from bench.run import resume_conflict
 
-
-def test_runs_recorded_before_the_field_existed_are_single_identity() -> None:
-    assert resume_conflict({"results": []}, "single identity") is None
-    assert resume_conflict({"results": []}, "step-scoped (S1-S3 buyer ...)") is not None
+SINGLE = "single identity"
 
 
-def test_same_conditions_resume() -> None:
-    prior = {"erp_access": "step-scoped (x)"}
-    assert resume_conflict(prior, "step-scoped (x)") is None
-    assert "single identity" in (resume_conflict(prior, "single identity") or "")
+def _now(access: str = SINGLE, version: int = EVIDENCE_VERSION) -> dict[str, object]:
+    return {"evidence_version": version, "erp_access": access}
+
+
+def test_results_written_before_the_fields_existed_are_legacy_conditions() -> None:
+    """The in-flight v4 file has neither field: version 1, single identity."""
+    v4 = {"results": [{"workflow_id": "v4-bench-clean-00"}]}
+    assert resume_conflict(v4, _now(version=1)) is None
+    conflict = resume_conflict(v4, _now())
+    assert conflict is not None and "evidence_version" in conflict
+
+
+def test_same_conditions_resume_and_any_difference_refuses() -> None:
+    prior = {"evidence_version": EVIDENCE_VERSION, "erp_access": "step-scoped (x)"}
+    assert resume_conflict(prior, _now("step-scoped (x)")) is None
+    assert "erp_access" in (resume_conflict(prior, _now()) or "")
 
 
 class _Store:
