@@ -59,7 +59,37 @@ taxonomy + labelled corpus), `bench/` (runner, metrics, reconciliation, report,
 plot), `trace/api.py` + `trace/explorer.py` + `ui/` (the Phase 5 trace
 explorer).
 
-Not built: Phase 6 hardening and observability, Phase 7 demo and writeup.
+Phase 6 is partly built: metrics, the dashboard and step-scoped ERP access
+are done; injection hardening waits for v4 to finish (it changes what the
+models see), and the 50-workflow load test needs the live stack.
+
+Not built: Phase 7 demo and writeup.
+
+## Observability (Phase 6)
+
+    uv run python scripts/metrics_exporter.py                      # :9108/metrics
+    docker compose -f infra/docker-compose/observability.yml up -d  # Grafana :3000
+
+| Piece | Where | Role |
+|---|---|---|
+| Exporter | `trace/metrics.py`, `scripts/metrics_exporter.py` | `veritas_*` from the live Postgres state; `veritas_bench_*` from `results/*.json` through `bench.metrics.summarise` |
+| Prometheus | `infra/observability/prometheus.yml` | Scrapes the exporter on the host via `host.docker.internal` |
+| Grafana | `infra/observability/grafana/` | Provisioned datasource (pinned uid) and the `VERITAS — reliability` dashboard |
+
+Counters are derived from the durable record, not incremented in-process:
+benchmark runs are short CLI processes that exit before a scrape could reach
+them, and the record already holds every retry and escalation. Benchmark
+series carry `run="incomplete"` while a run is being resumed and a
+`veritas_bench_info` series names the results file and commit (Rule 10).
+
+## Least privilege (Phase 6)
+
+`erp/scoped.py`. With `ERPNEXT_BUYER_API_KEY` set, `agent_client()` returns a
+`StepScopedERP`. S1–S3 run on a buyer identity holding no Accounts role, so
+ERPNext refuses it Payment Entry access, and S4–S6 run on the agent identity.
+Independently, each step may write only its own planned doctypes and call
+only its own mapping methods. The pipeline enters the scope with
+`erp.acting_for(step)`, a no-op on the plain client.
 
 ## The trace explorer (Phase 5)
 
