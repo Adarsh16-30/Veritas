@@ -161,6 +161,21 @@ if [ -f agent/pipeline.py ]; then
   fi
 else skip "RULE 7 agent/pipeline.py not present yet (pre-Phase 2)"; fi
 
+# PRD Phase 6 — least privilege: "S1–S3 hold no payment scope". Not one of the
+# ten rules, but a guarantee the same way: the local write/call scope must give
+# S1..S3 nothing that touches a payment, the buyer identity must cover exactly
+# S1..S3, and the pipeline must run every step inside its scope.
+if [ -f erp/scoped.py ]; then
+  miss=0
+  h=$(awk '/^(WRITE|CALL)_SCOPE/{t=1} t&&/"S1":/{f=1} t&&/"S4":/{f=0} /^}/{t=0;f=0} f' erp/scoped.py | grep -i 'payment' || true)
+  [ -z "$h" ] || { bad "PHASE 6 S1..S3 scope grants payment access:"; echo "$h" | sed 's/^/      /'; miss=1; }
+  grep -qF 'BUYER_STEPS: frozenset[str] = frozenset({"S1", "S2", "S3"})' erp/scoped.py \
+    || { bad "PHASE 6 buyer identity no longer covers exactly S1..S3"; miss=1; }
+  grep -q 'with self.erp.acting_for(ctx.step.value):' agent/pipeline.py \
+    || { bad "PHASE 6 agent/pipeline.py does not run each step inside its ERP scope"; miss=1; }
+  [ "$miss" -eq 0 ] && pass "PHASE 6 S1..S3 hold no payment scope; every step runs scoped"
+else skip "PHASE 6 erp/scoped.py not present yet"; fi
+
 # RULE 8 — no placeholder-data generators outside tests/.
 h=$(grep_non_test '\bfaker\b|Faker\(|\blorem\b|fake_vendor|placeholder_(vendor|amount|item)|random_supplier')
 if [ -n "$h" ]; then bad "RULE 8 placeholder-data generator outside tests/:"; echo "$h" | sed 's/^/      /'
