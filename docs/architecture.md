@@ -45,8 +45,10 @@ agent Postgres (`agent-postgres`, port 5433) — never in ERPNext's DB.
 
 ## Build order
 
-Phases are sequential (PRD §7). This repo is at **Phase 4 — fault-injection
-benchmark**.
+Phases are sequential (PRD §7). Phase 4's re-run (v4) is still being
+completed on the machine that holds the ledger; Phase 5 — the trace explorer —
+was built alongside it, because it is read-only over the trace store and cannot
+change a benchmark number.
 
 Built: `erp/` (typed client + idempotent writes), `orchestrator/` (durable
 S1..S6 machine, Postgres state, Redis queue and per-workflow lock, model-call
@@ -54,9 +56,29 @@ budget), `agent/` (context assembler, executor, pipeline), `trace/`
 (append-only store), `verify/` (rule engine, independent verifier, conformal
 router), `data/` (real procurement corpus + ERPNext seeding), `harness/` (fault
 taxonomy + labelled corpus), `bench/` (runner, metrics, reconciliation, report,
-plot).
+plot), `trace/api.py` + `trace/explorer.py` + `ui/` (the Phase 5 trace
+explorer).
 
-Not built: `ui/` — the Phase 5 trace explorer — and Phase 6 hardening.
+Not built: Phase 6 hardening and observability, Phase 7 demo and writeup.
+
+## The trace explorer (Phase 5)
+
+    uv run python scripts/trace_explorer.py      # http://127.0.0.1:8765
+
+| Piece | Module | Role |
+|---|---|---|
+| Reconstruction | `trace/explorer.py` | Pure functions over the rows the pipeline wrote: workflow → S1..S6 → attempts, each with the step context, DELTA facts, executor call + rationale, verifier call + verdict + violated expectations, rule report, region, route and commit |
+| Provenance | `trace/provenance.py` | `FACT_SOURCES` declares which ERPNext documents each DELTA fact is computed from; resolved to ERPNext desk links at read time |
+| API | `trace/api.py` | FastAPI: `/api/workflows`, `/api/workflows/{id}`, `/api/workflows/{id}/diff?step=&a=&b=` |
+| SPA | `ui/` | No build step. Timeline, per-attempt panels, provenance links, retry diff |
+
+Read-only by construction: each request opens its own Postgres session and
+sets it `READ ONLY` before the first query, on top of the append-only trigger
+on `traces`. Provenance is resolved from a declared table rather than recorded
+per trace, so it works for every run already in the store; the table is pinned
+to the `ContextAssembler` builders by `tests/unit/trace_provenance_synthetic_test.py`.
+The SPA renders all trace text with `textContent` — traces carry the
+adversarial-injection payloads verbatim.
 
 ## The verification gate (Phase 3)
 
