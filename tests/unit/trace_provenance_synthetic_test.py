@@ -146,3 +146,10 @@ def test_unknown_fact_is_reported_as_unknown() -> None:
 def test_document_names_are_url_quoted() -> None:
     src = resolve("supplier", docs={}, step_context="supplier: A/B & C", base="http://erp")
     assert src.url == "http://erp/app/supplier/A%2FB%20%26%20C"
+
+
+def test_summary_fields_read_both_trace_generations() -> None:
+    """Traces before evidence version 2 carry ERP text bare; after, quoted."""
+    assert summary_field("item: USA-1", "item") == "USA-1"
+    assert summary_field("item: \u00abUSA-1\u00bb", "item") == "USA-1"
+    assert summary_field("supplier: \u00ab\u00bb", "supplier") is None

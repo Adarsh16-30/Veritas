@@ -270,3 +270,43 @@ def test_non_injecting_variants_leave_the_shared_item_alone() -> None:
             continue
         injection = injector(base_spec("wf-x", record, 250_000.0), record)
         assert injection.spec.item_code == record.item_code, variant
+
+
+def test_boundary_invoices_never_exceed_the_tolerance_they_are_labelled_within() -> None:
+    """Run the real S4 fact builder over every boundary case the corpus can draw.
+
+    `boundary_at_tolerance` is labelled proceed, so `within_tolerance` must be
+    True for it -- at the edge, not past it. Rounding the invoice to the nearest
+    cent broke this for one in four real awards (b4-...-01, 24169.80: 2.000017%),
+    and the agent was scored wrong for holding correctly. Checked over every
+    record, not only the four the seed happened to draw.
+    """
+    from decimal import Decimal
+    from typing import Any
+
+    from agent.context import ContextAssembler, StepContext
+    from harness.faults import inject_boundary_at_tolerance
+
+    class PO:
+        def __init__(self, total: Decimal, qty: float) -> None:
+            self.total, self.qty = total, qty
+
+        def get(self, doctype: str, name: str) -> dict[str, Any]:
+            return {"name": name, "grand_total": float(self.total), "items": [{"qty": self.qty}]}
+
+        def duplicate_bill_exists(self, *_: Any, **__: Any) -> bool:
+            return False
+
+    checked = 0
+    for record in load_records(verify=False):
+        spec = inject_boundary_at_tolerance(base_spec("wf", record, 1e12), record).spec
+        po_total = (Decimal(str(spec.rate)) * Decimal(str(spec.qty))).quantize(Decimal("0.01"))
+        asm = ContextAssembler(PO(po_total, spec.qty), spec)  # type: ignore[arg-type]
+        ctx = StepContext(workflow_id="wf", step=Step.S4, docs={"S3": "PO-1"})
+        asm.assemble(ctx)
+        assert ctx.facts["within_tolerance"] is True, (record.award_id, ctx.facts)
+        # ...and still at the edge: within one cent of the limit.
+        edge = po_total * Decimal(str(spec.tolerance_pct)) / 100
+        assert abs(Decimal(str(ctx.facts["amount_variance"])) - edge) < Decimal("0.01")
+        checked += 1
+    assert checked > 50
