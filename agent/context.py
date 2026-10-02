@@ -239,21 +239,22 @@ class ContextAssembler:
     def _s1(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
         s = self.spec
         item = self.erp.get("Item", s.item_code)
+        code = sanitize(item.get("item_code"))
+        name = sanitize(item.get("item_name"))
         summary = {
-            "item": sanitize(item.get("item_code")),
-            "item_name": sanitize(item.get("item_name")),
+            "item": code,
+            "item_name": name,
             "qty_requested": s.qty,
             "needed_by": s.needed_by,
             "is_purchase_item": item.get("is_purchase_item"),
         }
         est = s.expected_total
-        name = summary["item_name"]
         # ERPNext falls back to the item code when no name was supplied, so an
         # item with no description at all arrives here looking like
         # "USA-272060915" rather than "". A name that is merely the item's own
         # code describes nothing, and this is the only signal that separates the
         # `missing` class from an ordinary item.
-        named_after_its_own_code = name.strip() == summary["item"].strip()
+        named_after_its_own_code = name.strip() == code.strip()
         facts = {
             "estimated_value": str(est),
             "item_is_purchasable": bool(item.get("is_purchase_item")),

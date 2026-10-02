@@ -40,9 +40,35 @@ def _load(path: Path) -> dict[str, Any] | None:
     return dict(json.loads(path.read_text(encoding="utf-8")))
 
 
-def _cite(payload: dict[str, Any], filename: str) -> str:
+def _cite(payload: dict[str, Any], path: str) -> str:
+    """A Rule 10 citation naming the file the number was actually read from.
+
+    ``path`` is the file's location relative to the repo root. It used to be
+    hardcoded to ``results/<name>`` whatever ``--results-dir`` said, so a report
+    rendered from an archived run cited the live file instead -- which by then
+    held a different run's numbers.
+    """
     commit = str(payload.get("commit") or "")[:12]
-    return f"[results: results/{filename}] (commit {commit}, {payload.get('completed_at')})"
+    return f"[results: {path}] (commit {commit}, {payload.get('completed_at')})"
+
+
+def _rel(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def missing_workflows(payload: dict[str, Any]) -> list[str]:
+    """Benchmark workflows a run has not yet recorded a usable result for.
+
+    ``bench.run --resume`` re-runs anything flagged ``infrastructure_failure``,
+    so those count as not yet done. An empty list means the run is complete.
+    """
+    done = {
+        r["workflow_id"] for r in payload.get("results", []) if not r.get("infrastructure_failure")
+    }
+    return [w for w in payload.get("benchmark_ids", []) if w not in done]
 
 
 def _pct(entry: dict[str, Any] | None) -> str:
@@ -62,8 +88,12 @@ def _delta(verified: dict[str, Any] | None, baseline: dict[str, Any] | None) -> 
 
 
 def render(
-    baseline: dict[str, Any] | None, verified: dict[str, Any] | None, ledger: dict[str, Any] | None
+    baseline: dict[str, Any] | None,
+    verified: dict[str, Any] | None,
+    ledger: dict[str, Any] | None,
+    results_dir: Path | None = None,
 ) -> str:
+    results_dir = results_dir or ROOT / "results"
     lines: list[str] = ["# results.md", ""]
 
     if not baseline and not verified:
@@ -76,8 +106,12 @@ def render(
 
     b_sum = summarise(baseline["results"], CAPS["baseline"]) if baseline else None
     v_sum = summarise(verified["results"], CAPS["verified"]) if verified else None
-    b_cite = _cite(baseline, BASELINE_NAME) if baseline else ""
-    v_cite = _cite(verified, VERIFIED_NAME) if verified else ""
+    b_cite = _cite(baseline, _rel(results_dir / BASELINE_NAME)) if baseline else ""
+    v_cite = _cite(verified, _rel(results_dir / VERIFIED_NAME)) if verified else ""
+    ledger_rel = _rel(results_dir / "ledger_reconciliation.json")
+    # A row holds a baseline number and a verified number, read from two files.
+    # Citing only one of them leaves the other column untraceable (Rule 10).
+    cites = "; ".join(c for c in (b_cite, v_cite) if c)
 
     lines += [
         "Every number below is measured. Targets live in `VERITAS_PRD.md` and "
@@ -94,7 +128,7 @@ def render(
     # Reporting a "verified" result without saying whether the calibrated router
     # or the uncalibrated fallback produced it would leave the reader to assume
     # the stronger of the two.
-    calibration = ROOT / "results" / "calibration.json"
+    calibration = results_dir / "calibration.json"
     if verified:
         if calibration.exists():
             cal = json.loads(calibration.read_text(encoding="utf-8"))
@@ -102,12 +136,12 @@ def render(
                 f"**Conformal router: calibrated** (alpha={cal.get('alpha')}, "
                 f"qhat={cal.get('qhat')}, fitted on {cal.get('n_calibration')} held-out points "
                 f"from {len(cal.get('workflow_ids', []))} workflows disjoint from this "
-                "benchmark, Rule 9). [results: results/calibration.json]",
+                "benchmark, Rule 9). [results: {_rel(calibration)}]",
                 "",
             ]
         else:
             lines += [
-                "**Conformal router: UNCALIBRATED.** No `results/calibration.json` exists, so "
+                f"**Conformal router: UNCALIBRATED.** No `{_rel(calibration)}` exists, so "
                 "the gate routed through `verify.conformal.unanimous_region` — all three gates "
                 "must agree to commit — rather than through a fitted prediction region. The "
                 "verified numbers below are for that configuration. No coverage or ECE figure "
@@ -116,11 +150,38 @@ def render(
                 "",
             ]
 
+    # A run still being resumed is not a measurement of the benchmark, and a
+    # delta between a complete baseline and half a verified run compares two
+    # different workflow sets. Say so, and withhold the delta.
+    incomplete = {
+        name: missing_workflows(payload)
+        for name, payload in (("baseline", baseline), ("verified", verified))
+        if payload and missing_workflows(payload)
+    }
+    if incomplete:
+        lines += ["## INCOMPLETE RUN — no delta reported", ""]
+        for name, missing in incomplete.items():
+            payload = baseline if name == "baseline" else verified
+            assert payload is not None
+            expected = len(payload.get("benchmark_ids", []))
+            lines.append(
+                f"- **{name}**: {expected - len(missing)} of {expected} benchmark workflows "
+                f"recorded; {len(missing)} still to run (`bench.run --resume`)."
+            )
+        lines += [
+            "",
+            "The per-configuration numbers below cover only what has been recorded. "
+            "They are not the benchmark result, and no verified-vs-baseline delta is "
+            "computed until both runs are complete.",
+            "",
+        ]
+
     if not baseline:
         lines += [
             "## Rule 4",
             "",
-            "`results/baseline_results.json` does not exist, so **no verified-vs-baseline delta "
+            f"`{_rel(results_dir / BASELINE_NAME)}` does not exist, so **no verified-vs-baseline "
+            "delta "
             "is reported**. The verified configuration's own numbers follow; the comparison "
             "requires the recorded baseline and is not estimated.",
             "",
@@ -139,9 +200,8 @@ def render(
     for key, metric, label in rows:
         b = b_sum.get(key) if b_sum else None
         v = v_sum.get(key) if v_sum else None
-        cite = v_cite or b_cite
-        delta = _delta(v, b) if (b_sum and v_sum) else "n/a"
-        lines.append(f"| {label} [metric: {metric}] | {_pct(b)} | {_pct(v)} | {delta} | {cite}")
+        delta = _delta(v, b) if (b_sum and v_sum and not incomplete) else "n/a"
+        lines.append(f"| {label} [metric: {metric}] | {_pct(b)} | {_pct(v)} | {delta} | {cites}")
     lines.append("")
 
     # --- compounding curve -------------------------------------------------------
@@ -156,8 +216,8 @@ def render(
     for k in range(1, 7):
         b = b_sum["survive"].get(f"k{k}") if b_sum else None
         v = v_sum["survive"].get(f"k{k}") if v_sum else None
-        lines.append(f"| {k} | {_pct(b)} | {_pct(v)} | [metric: survive] {v_cite or b_cite}")
-    lines += ["", (v_cite or b_cite), ""]
+        lines.append(f"| {k} | {_pct(b)} | {_pct(v)} | [metric: survive] {cites}")
+    lines += ["", (cites), ""]
 
     # --- per-fault-class detection ----------------------------------------------
     lines += [
@@ -178,9 +238,9 @@ def render(
         rules = "yes" if ref.get("rule_detectable") else "no"
         lines.append(
             f"| {name} | {ref.get('expected_terminal_action', '?')} | {rules} "
-            f"| {_pct(b)} | {_pct(v)} | [metric: detection] {v_cite or b_cite}"
+            f"| {_pct(b)} | {_pct(v)} | [metric: detection] {cites}"
         )
-    lines += ["", (v_cite or b_cite), ""]
+    lines += ["", (cites), ""]
 
     # --- cost / stopping ---------------------------------------------------------
     lines += ["## Latency and stopping", "", "| Metric | Baseline | Verified |", "|---|---|---|"]
@@ -197,7 +257,7 @@ def render(
             v = (v_sum or {}).get("budget", {}).get("llm_calls", {}).get(key)
         bs = fmt.format(b) if isinstance(b, int | float) else "n/a"
         vs = fmt.format(v) if isinstance(v, int | float) else "n/a"
-        lines.append(f"| {label} | {bs} | {vs} | {v_cite or b_cite} |")
+        lines.append(f"| {label} | {bs} | {vs} | {cites} |")
     for label, key in [
         ("forced escalations [metric: forced_escalation_total]", "forced_escalation_total"),
         ("step retries [metric: step_retry_total]", "step_retry_total"),
@@ -207,9 +267,9 @@ def render(
         v = (v_sum or {}).get("budget", {}).get(key)
         lines.append(
             f"| {label} | {b if b is not None else 'n/a'} | {v if v is not None else 'n/a'} "
-            f"| {v_cite or b_cite} |"
+            f"| {cites} |"
         )
-    lines += ["", (v_cite or b_cite), ""]
+    lines += ["", (cites), ""]
 
     # --- ledger ------------------------------------------------------------------
     if ledger:
@@ -221,7 +281,7 @@ def render(
             "not against the agent's own record of what it did.",
             "",
             f"bad postings (duplicate + overpayment): {ledger.get('bad_postings')} "
-            "[metric: bad_postings] [results: results/ledger_reconciliation.json] "
+            f"[metric: bad_postings] [results: {ledger_rel}] "
             f"({ledger.get('generated_at')})",
             "",
             f"- duplicate payments: {len(ledger.get('duplicate_payments', []))}",
@@ -230,7 +290,7 @@ def render(
             f"- documents sharing an idempotency key: "
             f"{len(ledger.get('duplicate_idempotency_keys', []))}",
             "",
-            f"[results: results/ledger_reconciliation.json] ({ledger.get('generated_at')})",
+            f"[results: {ledger_rel}] ({ledger.get('generated_at')})",
             "",
         ]
 
@@ -271,13 +331,14 @@ def main() -> int:
     if not report_path.is_absolute():
         report_path = ROOT / report_path
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(render(baseline, verified, ledger), encoding="utf-8")
+    report_path.write_text(render(baseline, verified, ledger, results_dir), encoding="utf-8")
 
-    print(f"wrote {report_path.relative_to(ROOT)}")
-    if baseline:
-        print(f"  baseline: {len(baseline['results'])} workflows")
-    if verified:
-        print(f"  verified: {len(verified['results'])} workflows")
+    print(f"wrote {_rel(report_path)}")
+    for name, payload in (("baseline", baseline), ("verified", verified)):
+        if payload:
+            missing = missing_workflows(payload)
+            note = f" -- INCOMPLETE, {len(missing)} still to run" if missing else ""
+            print(f"  {name}: {len(payload['results'])} workflows{note}")
     return 0
 
 
