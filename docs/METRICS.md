@@ -185,6 +185,13 @@ Median wall-clock of each pipeline stage (`Checkpointer`, `ContextAssembler`,
 Largest number of concurrently in-flight workflows completed without error growth
 or latency-p95 breach, with **4 workers**. **Target ≥ 50** (PRD §1).
 
+Measured by `bench/load.py`: all N workflows are enqueued at once, so N are in
+flight, and W workers drain them through the real queue and per-workflow lock.
+It reports p50/p95 for end-to-end latency (enqueue to terminal), service time
+and queue wait separately, plus `held_up`: every workflow finished, none ran
+twice, no document was committed twice, and no workflow exceeded its model-call
+cap.
+
 ---
 
 ## 7. Ledger reconciliation (`bench/reconcile_ledger.py`)
