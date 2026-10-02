@@ -18,9 +18,11 @@ secrets/
 # Graphify — local build tooling, not product code
 graphify-out/
 
-# Documentation — keep the README tracked
+# Documentation — root-level notes stay local; the README and the project
+# docs under docs/ are tracked (docs/results.md is Rule 10's record).
 *.md
 !/README.md
+!/docs/*.md
 
 # Docker local volumes / ERPNext site data
 infra/docker-compose/volumes/

@@ -13,10 +13,15 @@ def test_layout_present() -> None:
         "scripts/check_rules.sh",
         "scripts/handrun_buying_chain.py",
         "docs/METRICS.md",
+        "docs/results.md",
+        "docs/limitations.md",
+        "docs/architecture.md",
         "erp/idempotent.py",
         "orchestrator/checkpoint.py",
-        "VERITAS_PRD.md",
-        "docs/ENGINEERING_RULES.md",
+        # The PRD and the local agent rules file are deliberately kept out of
+        # the public repo. The PRD section 9 blocks they carry are pinned in
+        # scripts/provided_code_reference.json instead.
+        "scripts/provided_code_reference.json",
     ]:
         assert (ROOT / rel).is_file(), f"missing {rel}"
 
