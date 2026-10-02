@@ -25,7 +25,7 @@ the real ledger is a real duplicate invoice. See [`docs/limitations.md`](docs/li
 | 3 · Verification gate | complete except ECE ≤ 0.05 (no calibration fitted yet) |
 | **4 · Fault-injection benchmark** | built; re-run after the evidence-coverage fix in progress |
 | 5 · Trace explorer | built — `scripts/trace_explorer.py` |
-| 6 · Hardening & observability | not started |
+| 6 · Hardening & observability | partial — metrics + Grafana dashboard + step-scoped ERP access built; injection hardening waits for v4 |
 | 7 · End-to-end demo & writeup | not started |
 
 ## Quick start
@@ -127,6 +127,30 @@ diff of exactly what changed between attempts.
 
 Measured results live in `docs/results.md`; what those numbers do *not* cover
 lives in `docs/limitations.md`, which is worth reading first.
+
+## Observability
+
+```bash
+uv run python scripts/metrics_exporter.py                        # :9108/metrics, read-only
+docker compose -f infra/docker-compose/observability.yml up -d    # Prometheus :9090, Grafana :3000
+```
+
+The `VERITAS — reliability` dashboard shows the recorded benchmark (compounding
+curve, headline rates, detection by fault class, each bar marked complete or
+incomplete, with a source table naming the results file and commit) beside the
+live agent state (Rule 7's escalation and retry counters, budget violations,
+model-call latency, routes per step) and the conformal router's calibration
+status.
+
+## Least privilege
+
+```bash
+uv run python scripts/generate_scoped_api_key.py --buyer   # S1–S3 identity, no Accounts role
+```
+
+With the buyer key in `.env`, S1–S3 run on an identity ERPNext refuses Payment
+Entry access, and every step may write only its own documents (`erp/scoped.py`).
+Without it the agent runs on the single scoped key, as before.
 
 ## Repo layout
 
