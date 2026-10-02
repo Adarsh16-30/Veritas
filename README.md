@@ -21,10 +21,10 @@ the real ledger is a real duplicate invoice. See [`docs/limitations.md`](docs/li
 | Phase | State |
 |---|---|
 | 1 · Real environment foundation | complete |
-| **2 · Baseline agent (no verifier)** | happy path complete; baseline corpus deferred to Phase 4 |
-| 3 · Verification gate | not started |
-| 4 · Fault-injection benchmark | not started |
-| 5 · Trace explorer | not started |
+| 2 · Baseline agent (no verifier) | complete — `Pipeline(gate=None)` |
+| 3 · Verification gate | complete except ECE ≤ 0.05 (no calibration fitted yet) |
+| **4 · Fault-injection benchmark** | built; re-run after the evidence-coverage fix in progress |
+| 5 · Trace explorer | built — `scripts/trace_explorer.py` |
 | 6 · Hardening & observability | not started |
 | 7 · End-to-end demo & writeup | not started |
 
@@ -112,6 +112,18 @@ uv run python -m bench.run --config verified             # the three-gate path
 uv run python -m bench.reconcile_ledger                  # ask the real GL what happened
 uv run python -m bench.report                            # write docs/results.md
 ```
+
+## Trace explorer
+
+```bash
+uv run python scripts/trace_explorer.py    # http://127.0.0.1:8765, read-only
+```
+
+Pick any recorded workflow and see, step by step, what the agent was shown,
+what it proposed and why, what the independent verifier objected to (it never
+sees that rationale), which invariant fired, and what committed. Each DELTA fact
+links to the ERPNext document it was computed from; a step that retried gets a
+diff of exactly what changed between attempts.
 
 Measured results live in `docs/results.md`; what those numbers do *not* cover
 lives in `docs/limitations.md`, which is worth reading first.

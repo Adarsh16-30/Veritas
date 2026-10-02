@@ -509,3 +509,44 @@ writing. Two specific risks:
 If detection does not move, the honest conclusion is that 8B-class local models
 cannot use this evidence even when it is handed to them, and that belongs here
 rather than being engineered around.
+
+### Phase 5 — trace explorer
+
+- **Fact provenance is declared, not recorded.** The trace store keeps each
+  fact's value and the documents committed so far, but not which document a
+  fact was computed from. `trace/provenance.py` declares that mapping and the
+  explorer resolves it at read time, which is what lets it work on runs
+  recorded before Phase 5. A unit test runs every `ContextAssembler` builder
+  and fails if a fact or a document read is missing from the table, so drift
+  is caught — but the link is still an inference from code, not a record
+  written when the decision was made. Recording sources at assembly time is the
+  stronger design; it was deferred so as not to touch `agent/` while the v4
+  benchmark run is still in flight.
+- **Some facts are not from an ERPNext document, and the explorer says so.**
+  Quantities, rates, tolerances and the approval threshold come from the
+  procurement request the workflow was started with. The `out:` document a
+  step commits carries the same values into the ledger, and is linked once it
+  exists; for a step that escalated before committing, the request is the only
+  source, and it is shown as "not an ERPNext document". PRD Phase 5's "every
+  fact traces to a real ERPNext document" holds for read facts and committed
+  outputs, not for request inputs of a step that never committed.
+- **Master links resolve by name.** Item and Supplier links are built from the
+  item code and supplier name rendered into the step context. That matches how
+  `data.corpus` names suppliers (`name == supplier_name`); a Supplier created
+  any other way would link to the wrong URL.
+- **An attempt rejected before tracing is a gap, not a record.** When the
+  executor's output fails to parse, `agent/pipeline.py` retries without writing
+  a trace or attempt row. The explorer shows the missing attempt number as
+  untraced; the reason survives only in the next attempt's context.
+- **Run configuration is inferred.** A workflow is labelled verified when any
+  attempt has a gate record and baseline otherwise, because `workflows` does not
+  store its configuration. A verified workflow that never reached the gate would
+  read as baseline.
+- **The explorer has not yet been pointed at the real v4 store.** It was tested
+  against a real Postgres 16 with the production schema, through the real
+  `Store` write path, and driven in Chromium — but with scenario rows, not the
+  recorded benchmark runs, which live on the machine that holds the ledger.
+- **`trace/` stdlib shadowing, rechecked.** FastAPI, Starlette and uvicorn are
+  now dependencies; none imports the stdlib `trace` module, and the explorer
+  and its tests run.
+

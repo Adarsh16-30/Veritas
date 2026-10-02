@@ -277,3 +277,47 @@ class Store:
             "SELECT * FROM step_attempts WHERE workflow_id = %s ORDER BY step, attempt",
             (workflow_id,),
         ).fetchall()
+
+    # --- read-only queries for the trace explorer (Phase 5) ----------------------
+    def list_workflows(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        status: str | None = None,
+        prefix: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Workflows newest first, with their ground-truth label when one exists."""
+        clauses: list[str] = []
+        params: list[str] = []
+        if status:
+            clauses.append("w.status = %s")
+            params.append(status)
+        if prefix:
+            clauses.append("w.workflow_id LIKE %s")
+            params.append(prefix.replace("%", r"\%").replace("_", r"\_") + "%")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        query = f"""
+            SELECT w.workflow_id, w.status, w.current_step, w.escalation_reason,
+                   w.llm_calls, w.created_at, w.last_checkpoint_ts,
+                   l.fault_class, l.expected_terminal_action, l.fault_step
+              FROM workflows w
+              LEFT JOIN labels l ON l.workflow_id = w.workflow_id
+              {where}
+             ORDER BY w.created_at DESC, w.workflow_id
+             LIMIT %s OFFSET %s
+        """
+        return self.conn.execute(query, (*params, limit, offset)).fetchall()
+
+    def label_for(self, workflow_id: str) -> dict[str, Any] | None:
+        return self.conn.execute(
+            "SELECT fault_class, expected_terminal_action, fault_step FROM labels"
+            " WHERE workflow_id = %s",
+            (workflow_id,),
+        ).fetchone()
+
+    def checkpoints_for(self, workflow_id: str) -> list[dict[str, Any]]:
+        return self.conn.execute(
+            "SELECT step, status, ts FROM checkpoints WHERE workflow_id = %s ORDER BY step",
+            (workflow_id,),
+        ).fetchall()
