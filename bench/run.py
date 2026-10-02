@@ -39,6 +39,7 @@ from agent.pipeline import Policy  # noqa: E402
 from agent.state import Status  # noqa: E402
 from data.corpus import seed  # noqa: E402
 from erp.client import ERPClient, ERPError  # noqa: E402
+from erp.scoped import agent_client, describe  # noqa: E402
 from harness.corpus import (  # noqa: E402
     VARIANTS,
     CorpusPlan,
@@ -221,7 +222,8 @@ def main() -> int:
         out_path = (ROOT / out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    erp = ERPClient()
+    erp = agent_client()
+    erp_access = describe(erp)
     if not erp.ping():
         print(f"ERPNext not reachable at {erp.url}", file=sys.stderr)
         return 1
@@ -251,6 +253,7 @@ def main() -> int:
             cases = [c for c in cases if c.variant in wanted]
         print(f"config={args.config} split={args.split} workflows={len(cases)}")
         print(f"  corpus seed={args.seed}  run_tag={run_tag}  executor={executor_model}")
+        print(f"  erp access: {erp_access}")
         print(f"  writing {_rel(out_path)}\n", flush=True)
 
         # Run-level resume. Workflows are already individually resumable (Rule 6),
@@ -266,6 +269,10 @@ def main() -> int:
         results: list[dict[str, Any]] = []
         if args.resume and out_path.exists():
             prior = json.loads(out_path.read_text(encoding="utf-8"))
+            conflict = resume_conflict(prior, erp_access)
+            if conflict:
+                print(f"refusing to resume {_rel(out_path)}: {conflict}", file=sys.stderr)
+                return 2
             results = list(prior.get("results", []))
             # A workflow whose model server was down was never actually run.
             # Keeping it would bake an infrastructure outage into the results.
@@ -291,7 +298,9 @@ def main() -> int:
                 f"{record['wall_clock_ms'] / 1000:6.1f}s llm={record['llm_calls']}",
                 flush=True,
             )
-            _write(out_path, args, plan, executor_model, started_at, results, wall_started)
+            _write(
+                out_path, args, plan, executor_model, started_at, results, wall_started, erp_access
+            )
 
     correct = sum(1 for r in results if r["correct"])
     print(f"\n{correct}/{len(results)} terminal actions matched the label")
@@ -305,6 +314,22 @@ def main() -> int:
     return 0
 
 
+def resume_conflict(prior: dict[str, Any], erp_access: str) -> str | None:
+    """Why a recorded run must not be resumed under the current conditions, if so.
+
+    One run, one set of conditions (Rule 4): a run half-recorded on the single
+    agent identity and finished step-scoped would measure two things at once.
+    Results written before ``erp_access`` was recorded ran on the single identity.
+    """
+    prior_access = prior.get("erp_access", "single identity")
+    if prior_access == erp_access:
+        return None
+    return (
+        f"it was recorded with erp access {prior_access!r} and this run would use "
+        f"{erp_access!r}. Finish it under the original access model, or start a new run tag."
+    )
+
+
 def _write(
     out_path: Path,
     args: argparse.Namespace,
@@ -313,6 +338,7 @@ def _write(
     started_at: str,
     results: list[dict[str, Any]],
     wall_started: float,
+    erp_access: str,
 ) -> None:
     """Rewritten after every workflow: a run that dies keeps what it earned."""
     payload = {
@@ -320,6 +346,7 @@ def _write(
         "split": args.split,
         "corpus_seed": args.seed,
         "executor_model": executor_model,
+        "erp_access": erp_access,
         "started_at": started_at,
         "completed_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "commit": _commit_sha(),

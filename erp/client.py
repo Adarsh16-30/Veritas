@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from decimal import Decimal
 from typing import Any, cast
 
@@ -87,6 +89,16 @@ class ERPClient:
         )
         if r.status_code != 200:
             raise ERPError(f"admin login failed: {r.status_code} {r.text[:300]}")
+
+    @contextmanager
+    def acting_for(self, step: str) -> Iterator[None]:
+        """Scope every call inside the block to one workflow step.
+
+        A single-identity client has nothing to switch, so this is a no-op here.
+        ``erp.scoped.StepScopedERP`` overrides it to change ERPNext identity and
+        to refuse writes outside the step's own doctypes (PRD Phase 6).
+        """
+        yield
 
     # --- plumbing --------------------------------------------------------------
     def _check(self, r: requests.Response) -> Any:
