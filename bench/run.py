@@ -243,6 +243,10 @@ def main() -> int:
     started_at = datetime.now(UTC).isoformat(timespec="seconds")
 
     with Store() as store:
+        conflict = tag_conflict(store, run_tag, args.resume)
+        if conflict:
+            print(f"refusing to start: {conflict}", file=sys.stderr)
+            return 2
         cases = prepare(plan, store, erp, args.split)
         if args.variants:
             wanted = {v.strip() for v in args.variants.split(",") if v.strip()}
@@ -269,7 +273,7 @@ def main() -> int:
         results: list[dict[str, Any]] = []
         if args.resume and out_path.exists():
             prior = json.loads(out_path.read_text(encoding="utf-8"))
-            conflict = resume_conflict(prior, erp_access)
+            conflict = resume_conflict(prior, erp_access) or file_tag_conflict(prior, run_tag)
             if conflict:
                 print(f"refusing to resume {_rel(out_path)}: {conflict}", file=sys.stderr)
                 return 2
@@ -312,6 +316,47 @@ def main() -> int:
             file=sys.stderr,
         )
     return 0
+
+
+def tag_conflict(store: Any, run_tag: str, resume: bool) -> str | None:
+    """Why a fresh run must not use this tag, if so.
+
+    Workflow ids are ``{tag}-{split}-{variant}-{nn}`` and every workflow is
+    resumable (Rule 6), so a new run under a tag already in the state store
+    silently resumes the old workflows: their committed steps are skipped and the
+    "new" run measures nothing. ``--resume`` is the deliberate way to continue a
+    run; anything else must pick an unused tag.
+    """
+    if resume:
+        return None
+    if store.list_workflows(prefix=f"{run_tag}-", limit=1):
+        return (
+            f"run tag {run_tag!r} already has workflows in the state store, so this run "
+            "would resume them and measure nothing. Pass --resume to continue that run, "
+            "or choose a new --run-tag."
+        )
+    return None
+
+
+def file_tag_conflict(prior: dict[str, Any], run_tag: str) -> str | None:
+    """Why ``--resume`` must not append to this results file, if so.
+
+    ``--out`` names a file, not a run. Resuming tag ``b5`` into a file that holds
+    run ``b4`` would merge two runs into one set of numbers.
+    """
+    others = sorted(
+        {
+            str(r.get("workflow_id", "")).split("-", 1)[0]
+            for r in prior.get("results", [])
+            if not str(r.get("workflow_id", "")).startswith(f"{run_tag}-")
+        }
+    )
+    if not others:
+        return None
+    return (
+        f"it holds results from run tag(s) {others}, not {run_tag!r}. Write this run to "
+        "a different --out, or archive that file first."
+    )
 
 
 def resume_conflict(prior: dict[str, Any], erp_access: str) -> str | None:
