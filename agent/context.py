@@ -220,11 +220,20 @@ class ContextAssembler:
         ctx.idempotency_key = idempotency_key(
             ctx.workflow_id, ctx.step.value, self._attempt_input(ctx)
         )
+        ctx.erp_reads = []
         builder = self._BUILDERS[ctx.step]
         facts, summary, amount = builder(self, ctx)
         ctx.facts = facts
         ctx.amount_at_stake = amount
         ctx.step_context = self._render(ctx, summary, facts)
+
+    # --- recorded reads (provenance) --------------------------------------------
+    def _get(self, ctx: StepContext, doctype: str, name: str) -> dict[str, Any]:
+        ctx.erp_reads.append({"doctype": doctype, "name": name})
+        return self.erp.get(doctype, name)
+
+    def _query(self, ctx: StepContext, doctype: str, what: str) -> None:
+        ctx.erp_reads.append({"doctype": doctype, "query": what})
 
     # --- the semantic identity of this step's write (Rule 5) -------------------
     def _attempt_input(self, ctx: StepContext) -> dict[str, Any]:
@@ -261,7 +270,7 @@ class ContextAssembler:
     # --- per-step assembly ------------------------------------------------------
     def _s1(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
         s = self.spec
-        item = self.erp.get("Item", s.item_code)
+        item = self._get(ctx, "Item", s.item_code)
         code = sanitize(item.get("item_code"))
         name = sanitize(item.get("item_name"))
         summary = {
@@ -302,7 +311,7 @@ class ContextAssembler:
 
     def _s2(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
         s = self.spec
-        mr = self.erp.get("Material Request", ctx.docs["S1"])
+        mr = self._get(ctx, "Material Request", ctx.docs["S1"])
         est = s.expected_total
         summary = {
             "material_request": mr["name"],
@@ -321,8 +330,8 @@ class ContextAssembler:
 
     def _s3(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
         s = self.spec
-        supplier = self.erp.get("Supplier", s.supplier)
-        mr = self.erp.get("Material Request", ctx.docs["S1"])
+        supplier = self._get(ctx, "Supplier", s.supplier)
+        mr = self._get(ctx, "Material Request", ctx.docs["S1"])
         mr_qty = sum(_d(i.get("qty")) for i in mr.get("items", []))
         total = s.expected_total
         summary = {
@@ -345,7 +354,7 @@ class ContextAssembler:
     def _s4(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
         """Three-way match. Every comparison is computed here, not by the model."""
         s = self.spec
-        po = self.erp.get("Purchase Order", ctx.docs["S3"])
+        po = self._get(ctx, "Purchase Order", ctx.docs["S3"])
         po_total = _d(po.get("grand_total"))
         po_qty = sum(_d(i.get("qty")) for i in po.get("items", []))
         # The delivery note and the supplier invoice are independent evidence
@@ -358,6 +367,7 @@ class ContextAssembler:
         pct = (abs(variance) / po_total * 100) if po_total else Decimal("0")
         tolerance = Decimal(str(s.tolerance_pct))
         # Our own in-flight invoice is not a duplicate of itself (Rule 6).
+        self._query(ctx, "Purchase Invoice", "duplicate supplier bill number")
         duplicate = self.erp.duplicate_bill_exists(
             s.supplier, s.bill_no, exclude_key=derived_key(ctx, "invoice")
         )
@@ -388,8 +398,8 @@ class ContextAssembler:
 
     def _s5(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
         s = self.spec
-        pi = self.erp.get("Purchase Invoice", ctx.docs["S4_invoice"])
-        po = self.erp.get("Purchase Order", ctx.docs["S3"])
+        pi = self._get(ctx, "Purchase Invoice", ctx.docs["S4_invoice"])
+        po = self._get(ctx, "Purchase Order", ctx.docs["S3"])
         pi_total = _d(pi.get("grand_total"))
         po_total = _d(po.get("grand_total"))
         variance = pi_total - po_total
@@ -425,9 +435,10 @@ class ContextAssembler:
 
     def _s6(self, ctx: StepContext) -> tuple[dict[str, Any], dict[str, Any], Decimal]:
         s = self.spec
-        pi = self.erp.get("Purchase Invoice", ctx.docs["S4_invoice"])
+        pi = self._get(ctx, "Purchase Invoice", ctx.docs["S4_invoice"])
         outstanding = _d(pi.get("outstanding_amount"))
         grand = _d(pi.get("grand_total"))
+        self._query(ctx, "Payment Entry", "prior payment against this invoice")
         already_paid = self.erp.get_list(
             "Payment Entry",
             filters=[

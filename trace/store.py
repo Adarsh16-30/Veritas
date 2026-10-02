@@ -36,6 +36,7 @@ class TraceLogger:
             "idempotency_key": ctx.idempotency_key,
             "facts": {k: str(v) for k, v in ctx.facts.items()},
             "amount_at_stake": str(ctx.amount_at_stake),
+            "erp_reads": list(ctx.erp_reads),
         }
         if extra_provenance:
             provenance.update(extra_provenance)
