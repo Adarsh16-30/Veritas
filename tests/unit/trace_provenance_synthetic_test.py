@@ -153,3 +153,12 @@ def test_summary_fields_read_both_trace_generations() -> None:
     assert summary_field("item: USA-1", "item") == "USA-1"
     assert summary_field("item: \u00abUSA-1\u00bb", "item") == "USA-1"
     assert summary_field("supplier: \u00ab\u00bb", "supplier") is None
+
+
+@pytest.mark.parametrize("step", list(Step))
+def test_the_assembler_records_exactly_the_reads_it_makes(step: Step) -> None:
+    """ctx.erp_reads is the record the explorer trusts: it must match what the
+    builder actually asked ERPNext for, documents and ledger-wide lookups alike."""
+    ctx, erp = _run(step)
+    assert {r["doctype"] for r in ctx.erp_reads if "name" in r} == erp.read
+    assert {r["doctype"] for r in ctx.erp_reads if "query" in r} == erp.queried

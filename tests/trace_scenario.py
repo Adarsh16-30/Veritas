@@ -53,6 +53,11 @@ S4_FACTS_1 = {
     "bill_no_not_previously_invoiced": "True",
     "three_way_match_clean": "False",
 }
+#: What the real S4 builder reads (agent/context.py _s4).
+S4_READS = [
+    {"doctype": "Purchase Order", "name": "PUR-ORD-2026-00001"},
+    {"doctype": "Purchase Invoice", "query": "duplicate supplier bill number"},
+]
 REJECTION = "verifier_rejected: within_tolerance must be True before an invoice is booked"
 
 
@@ -80,7 +85,11 @@ def _executor(
     docs: dict[str, str],
     action: str,
     rationale: str,
+    reads: list[dict[str, str]] | None = None,
 ) -> int:
+    # `reads=None` writes a trace in the pre-evidence-version-2 shape, with no
+    # `erp_reads` key at all, as every trace recorded before then has.
+    extra = {} if reads is None else {"erp_reads": reads}
     return w.append_trace(
         workflow_id=wf,
         step=step,
@@ -99,6 +108,7 @@ def _executor(
             "stage": "executor",
             "rationale": rationale,
             "action": action,
+            **extra,
         },
     )
 
@@ -208,7 +218,16 @@ def write_verified(w: Writer, wf: str) -> None:
     # S4: rejected, retried with the reason fed back, then committed.
     w.checkpoint(wf, "S4", "in_progress")
     tid = _executor(
-        w, wf, "S4", 1, S4_CONTEXT, S4_FACTS_1, dict(docs), "proceed", "variance is small"
+        w,
+        wf,
+        "S4",
+        1,
+        S4_CONTEXT,
+        S4_FACTS_1,
+        dict(docs),
+        "proceed",
+        "variance is small",
+        reads=S4_READS,
     )
     violated = ["within_tolerance must be True before an invoice is booked"]
     _verifier(w, wf, "S4", 1, S4_CONTEXT, False, violated)
@@ -263,6 +282,7 @@ def write_verified(w: Writer, wf: str) -> None:
         dict(docs),
         "proceed",
         "variance resolved",
+        reads=[],  # recorded, and empty: every declared document source is "not read"
     )
     rv = [
         {

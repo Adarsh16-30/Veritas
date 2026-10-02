@@ -88,6 +88,7 @@ body {
 .empty, .muted { color: var(--muted); }
 .error { color: var(--bad); }
 .warn-text { color: var(--warn); }
+.read-ok { color: var(--ok); font-size: 12px; }
 
 .card {
   background: var(--panel);

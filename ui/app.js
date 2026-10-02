@@ -272,7 +272,7 @@ function attemptCard(recon, s, a) {
     h(
       "div",
       { class: "grid" },
-      h("div", {}, h("h3", {}, "What the agent saw"), h("pre", { class: "context" }, a.step_context), factsTable(a)),
+      h("div", {}, h("h3", {}, "What the agent saw"), h("pre", { class: "context" }, a.step_context), factsTable(a), readsList(a)),
       h("div", {}, executorBox(a), verifierBox(recon, a), gateBox(a)),
     ),
   );
@@ -308,8 +308,31 @@ function sources(list) {
     list.map((src) => {
       if (src.kind === "request") return h("li", { class: "muted" }, src.label);
       if (!src.resolved) return h("li", { class: "muted" }, src.label);
-      return h("li", {}, safeLink(src.url, src.label));
+      // read: true = in this attempt's recorded reads; false = declared but not
+      // read (the table and the record disagree); null = no record to check.
+      const mark =
+        src.read === true
+          ? h("span", { class: "read-ok", title: "in this attempt's recorded ERPNext reads" }, " ✓ read")
+          : src.read === false
+            ? h("span", { class: "warn-text", title: "declared as a source, but not in the recorded reads" }, " ⚠ not read")
+            : null;
+      return h("li", {}, safeLink(src.url, src.label), mark);
     }),
+  );
+}
+
+function readsList(a) {
+  if (a.erp_reads === null || a.erp_reads === undefined) {
+    return h("p", { class: "note" }, "ERPNext reads were not recorded for this trace (before evidence version 2); sources above are from the declared provenance table.");
+  }
+  if (!a.erp_reads.length) return h("p", { class: "note" }, "This step read nothing from ERPNext.");
+  return details(
+    `ERPNext reads recorded at this step (${a.erp_reads.length})`,
+    h(
+      "ul",
+      { class: "sources" },
+      a.erp_reads.map((r) => h("li", {}, safeLink(r.url, r.name ? `${r.doctype} ${r.name}` : `${r.doctype} — ${r.query}`))),
+    ),
   );
 }
 
