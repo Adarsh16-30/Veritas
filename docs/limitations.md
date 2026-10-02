@@ -550,3 +550,41 @@ rather than being engineered around.
   now dependencies; none imports the stdlib `trace` module, and the explorer
   and its tests run.
 
+### Phase 6 — hardening and observability (partial)
+
+- **Injection hardening is not done.** The PRD asks for untrusted ERPNext text
+  to be sanitized before it enters any model context, and for the
+  embedded-instruction class to be shown defended. Any real defence changes
+  what the executor and verifier see, which is the same kind of change that
+  forced the v4 re-run (Rule 4), so it was deliberately not made while v4 is in
+  flight. It needs its own b5/v5 run. Until then the only measured evidence is
+  Phase 4's, including the caveat that the direct injection variant largely
+  measures the `reads_as_instructions` heuristic.
+- **Server-side least privilege is unverified.** The local scope guard is unit
+  tested and enforced by `check_rules.sh`. That ERPNext itself refuses the
+  buyer identity Payment Entry access depends on the live role configuration.
+  `tests/integration/test_erp_scope_integration.py` checks it, with positive
+  controls, but has not yet run against the real instance. The buyer's role
+  bundle (purchasing and stock, no Accounts role) is also unproven to cover
+  everything S1–S3 touch, and only a live run shows that.
+- **No v4 workflow ran step-scoped.** Every recorded benchmark number so far is
+  single-identity, and `bench.run` refuses to resume a run under a different
+  access model rather than mix the two.
+- **Grafana itself was not run here.** The dashboard is checked structurally
+  (every panel and query names the provisioned datasource; every queried metric
+  is one the exporter emits), and every panel's PromQL was executed against a
+  real Prometheus 2.53 scraping the exporter over a real Postgres 16 — 16/16
+  returned data. Grafana's download host was unreachable from the build
+  environment, so rendering is unverified.
+- **Latency quantiles are bucket estimates.** `veritas_step_latency_seconds` is
+  a histogram; `histogram_quantile` interpolates within buckets and is coarse
+  at small n. The benchmark's own `latency_p50`/`p95` come from exact wall clock
+  in the results files and are the numbers to cite.
+- **Live counters cover whatever is in the state store.** Benchmark,
+  calibration and ad-hoc workflows share one Postgres; the dashboard separates
+  them by run tag. Wiping the store resets the counters (Prometheus handles the
+  reset; the history before it is only in Prometheus's own retention).
+- **The ≥ 50 concurrent workflows target (PRD §1) is still unexercised.** The
+  load test that would scrape these counters under 4 workers needs the live
+  stack.
+

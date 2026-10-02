@@ -91,6 +91,13 @@ per-workflow rates. No workflow may exceed the configured **max LLM-calls
 budget** (`llm_calls_per_workflow ≤ CAP`); violations are a bug, reported as
 `budget_violations` (target 0).
 
+Exported by `scripts/metrics_exporter.py` as `veritas_forced_escalation_total`
+(labelled by escalation reason class) and `veritas_step_retry_total` (by step),
+plus `veritas_budget_violations` against `veritas_llm_call_cap`. They are
+derived from the durable Postgres record on every scrape, with the same
+definitions `bench.metrics.budget` uses: a forced escalation is any workflow
+that ended escalated, and a retry is any attempt beyond the first at a step.
+
 ---
 
 ## 3. Calibration (Phase 3, post-conformal)
