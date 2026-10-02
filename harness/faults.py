@@ -26,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import TYPE_CHECKING
 
 from agent.context import WorkflowSpec
@@ -308,9 +308,15 @@ def inject_boundary_at_tolerance(spec: WorkflowSpec, record: AwardRecord) -> Inj
     failure from all the others — an agent that escalates everything scores
     perfectly on faults and fails this one.
     """
+    # Rounded DOWN to the cent. Rounding to nearest put the invoice a fraction of
+    # a cent *over* the tolerance whenever rate x tolerance was not a whole
+    # number of cents (b4-bench-boundary_at_tolerance-01: 2.000017%), which the
+    # context displays as `2.000` but compares as a breach. The agent then held,
+    # correctly, and was scored wrong against a label saying proceed (evidence
+    # version 2, bench/conditions.py).
     at_edge = (
         Decimal(str(spec.rate)) * (Decimal("1") + Decimal(str(spec.tolerance_pct)) / 100)
-    ).quantize(Decimal("0.01"))
+    ).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
     return Injection(
         fault_class=BOUNDARY,
         variant="exactly_at_tolerance",

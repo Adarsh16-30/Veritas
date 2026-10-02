@@ -37,6 +37,7 @@ from dotenv import load_dotenv  # noqa: E402
 from agent.executor import Executor, OllamaLLM  # noqa: E402
 from agent.pipeline import Policy  # noqa: E402
 from agent.state import Status  # noqa: E402
+from bench.conditions import EVIDENCE_VERSION, differences, recorded  # noqa: E402
 from data.corpus import seed  # noqa: E402
 from erp.client import ERPClient, ERPError  # noqa: E402
 from erp.scoped import agent_client, describe  # noqa: E402
@@ -224,6 +225,7 @@ def main() -> int:
 
     erp = agent_client()
     erp_access = describe(erp)
+    conditions = {"evidence_version": EVIDENCE_VERSION, "erp_access": erp_access}
     if not erp.ping():
         print(f"ERPNext not reachable at {erp.url}", file=sys.stderr)
         return 1
@@ -257,7 +259,7 @@ def main() -> int:
             cases = [c for c in cases if c.variant in wanted]
         print(f"config={args.config} split={args.split} workflows={len(cases)}")
         print(f"  corpus seed={args.seed}  run_tag={run_tag}  executor={executor_model}")
-        print(f"  erp access: {erp_access}")
+        print(f"  erp access: {erp_access}   evidence version: {EVIDENCE_VERSION}")
         print(f"  writing {_rel(out_path)}\n", flush=True)
 
         # Run-level resume. Workflows are already individually resumable (Rule 6),
@@ -273,7 +275,7 @@ def main() -> int:
         results: list[dict[str, Any]] = []
         if args.resume and out_path.exists():
             prior = json.loads(out_path.read_text(encoding="utf-8"))
-            conflict = resume_conflict(prior, erp_access) or file_tag_conflict(prior, run_tag)
+            conflict = resume_conflict(prior, conditions) or file_tag_conflict(prior, run_tag)
             if conflict:
                 print(f"refusing to resume {_rel(out_path)}: {conflict}", file=sys.stderr)
                 return 2
@@ -303,7 +305,7 @@ def main() -> int:
                 flush=True,
             )
             _write(
-                out_path, args, plan, executor_model, started_at, results, wall_started, erp_access
+                out_path, args, plan, executor_model, started_at, results, wall_started, conditions
             )
 
     correct = sum(1 for r in results if r["correct"])
@@ -359,19 +361,19 @@ def file_tag_conflict(prior: dict[str, Any], run_tag: str) -> str | None:
     )
 
 
-def resume_conflict(prior: dict[str, Any], erp_access: str) -> str | None:
+def resume_conflict(prior: dict[str, Any], conditions: dict[str, Any]) -> str | None:
     """Why a recorded run must not be resumed under the current conditions, if so.
 
-    One run, one set of conditions (Rule 4): a run half-recorded on the single
-    agent identity and finished step-scoped would measure two things at once.
-    Results written before ``erp_access`` was recorded ran on the single identity.
+    One run, one set of conditions (Rule 4). A run half-recorded under one
+    evidence version or ERP access model and finished under another would
+    measure two things at once and report them as one (bench/conditions.py).
     """
-    prior_access = prior.get("erp_access", "single identity")
-    if prior_access == erp_access:
+    diff = differences(recorded(prior), conditions)
+    if not diff:
         return None
     return (
-        f"it was recorded with erp access {prior_access!r} and this run would use "
-        f"{erp_access!r}. Finish it under the original access model, or start a new run tag."
+        f"it was recorded under different conditions ({'; '.join(diff)}). Finish it on "
+        "the code and configuration it started with, or start a new run tag."
     )
 
 
@@ -383,7 +385,7 @@ def _write(
     started_at: str,
     results: list[dict[str, Any]],
     wall_started: float,
-    erp_access: str,
+    conditions: dict[str, Any],
 ) -> None:
     """Rewritten after every workflow: a run that dies keeps what it earned."""
     payload = {
@@ -391,7 +393,7 @@ def _write(
         "split": args.split,
         "corpus_seed": args.seed,
         "executor_model": executor_model,
-        "erp_access": erp_access,
+        **conditions,
         "started_at": started_at,
         "completed_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "commit": _commit_sha(),
