@@ -137,7 +137,7 @@ def render(
                 f"**Conformal router: calibrated** (alpha={cal.get('alpha')}, "
                 f"qhat={cal.get('qhat')}, fitted on {cal.get('n_calibration')} held-out points "
                 f"from {len(cal.get('workflow_ids', []))} workflows disjoint from this "
-                "benchmark, Rule 9). [results: {_rel(calibration)}]",
+                f"benchmark, Rule 9). [results: {_rel(calibration)}]",
                 "",
             ]
         else:
