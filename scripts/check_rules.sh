@@ -130,6 +130,13 @@ if [ -f erp/idempotent.py ]; then
   fi
 else skip "RULE 5 erp/idempotent.py not present yet (pre-Phase 2)"; fi
 
+# RULE 5 — a write is never resent at the HTTP layer; only the key may decide.
+if [ -f scripts/check_write_retry.py ]; then
+  if out=$(python scripts/check_write_retry.py 2>&1); then
+    pass "RULE 5 ERPNext writes are sent once (no HTTP-level retry)"
+  else bad "RULE 5 an ERPNext write can be retried blind:"; echo "$out" | sed 's/^/      /'; fi
+else skip "RULE 5 write-retry check not present"; fi
+
 # RULE 6 — checkpoint before side effect.
 if [ -f orchestrator/checkpoint.py ]; then
   if grep -q 'def advance' orchestrator/checkpoint.py && grep -q 'checkpoint(' orchestrator/checkpoint.py; then

@@ -72,8 +72,13 @@ Workflow ids are `{tag}-{split}-{variant}-{nn}` and every workflow is resumable,
 so a new run under a tag already in the state store silently resumes the old
 workflows and measures nothing. `bench.run` refuses a fresh run on a used tag, a
 `--resume` into a results file holding another tag, and a `--resume` under
-different recorded conditions. Burned tags on the development store: b1–b3, v1–v3.
-b4/v4 are evidence version 1; the next runs are b5/c5/v5.
+different recorded conditions. Burned tags on the development store: b1–b5,
+v1–v5, c5 and l1. b4/v4 are evidence version 1; b5/c5/v5 are evidence version 2.
+The next runs are b6/c6/v6.
+
+An outage (ERPNext or a model server down) surfaces as a typed
+`InfrastructureUnavailable` rather than as an escalation. `bench.run` records it
+as `infrastructure_failure`, which is never scored, and `--resume` re-runs it.
 
 ### 5.2 Evidence versions
 `bench/conditions.py: EVIDENCE_VERSION` is bumped by hand with any change to
@@ -93,6 +98,11 @@ Every serious defect so far has had this shape, and none surfaced as an error.
    shared row an older run poisoned.
 3. **A fix that passes on a shape production never sends.** Check the live ERP,
    not only the fixture (ERPNext substitutes the item code for an empty name).
+4. **A citation that points at nothing.** Rewriting history orphans the commit
+   ids that results files record, and nothing breaks syntactically.
+   `docs/provenance.md` maps every recorded commit that is not in history, and
+   `scripts/check_provenance.py` fails on any that is unmapped. Never rewrite
+   published history without updating the map.
 
 ### 5.4 The development machine
 Two ~5 GB local models with ~5 GB of free RAM: verified workflows take 90–220 s,

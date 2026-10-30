@@ -40,6 +40,7 @@ from agent.state import Status  # noqa: E402
 from bench.conditions import EVIDENCE_VERSION, differences, recorded  # noqa: E402
 from data.corpus import seed  # noqa: E402
 from erp.client import ERPClient, ERPError  # noqa: E402
+from erp.resilience import InfrastructureUnavailable  # noqa: E402
 from erp.scoped import agent_client, describe  # noqa: E402
 from harness.corpus import (  # noqa: E402
     VARIANTS,
@@ -82,6 +83,11 @@ INFRASTRUCTURE_MARKERS: tuple[str, ...] = (
     "WinError 10061",
     "Failed to establish a new connection",
     "Read timed out",
+    # Typed outages (erp/resilience.py) now propagate instead of escalating, and
+    # reach here as "<ClassName>: <message>".
+    "InfrastructureUnavailable",
+    "ERPUnavailable",
+    "ModelUnavailable",
 )
 
 
@@ -153,9 +159,12 @@ def run_case(
     except Exception as e:  # noqa: BLE001 - a crashed workflow is a recorded result
         status, reason, docs, steps = Status.FAILED, f"{type(e).__name__}: {e}"[:400], {}, []
         error = reason
+        outage = isinstance(e, InfrastructureUnavailable)
+    else:
+        outage = False
 
     label = case.label_row()
-    infrastructure = is_infrastructure_failure(reason) or is_infrastructure_failure(error)
+    infrastructure = outage or is_infrastructure_failure(reason) or is_infrastructure_failure(error)
     return {
         **label,
         "variant": case.variant,
