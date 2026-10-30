@@ -37,6 +37,29 @@ CAL_TAG="${VERITAS_CAL_TAG:-c6}"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
+# Results recorded under an earlier evidence version cannot be resumed into
+# (bench/conditions.py). Say so here, with the fix, rather than after the corpus
+# step has started writing.
+stale=$(uv run python - <<'PY'
+import json
+from pathlib import Path
+from bench.conditions import EVIDENCE_VERSION
+for name in ("baseline_results.json", "calibration_run.json", "verified_results.json"):
+    path = Path("results") / name
+    if path.is_file():
+        version = json.loads(path.read_text(encoding="utf-8")).get("evidence_version", 1)
+        if version != EVIDENCE_VERSION:
+            print(f"{name} (evidence version {version}, code is {EVIDENCE_VERSION})")
+PY
+)
+if [ -n "$stale" ]; then
+  echo "results/ still holds runs recorded under an earlier evidence version:"
+  echo "$stale" | sed 's/^/    /'
+  echo "Archive them first, commit, then run this again:"
+  echo "    bash scripts/archive_results.sh evidence-v<N>-<tags>     # e.g. evidence-v2-b5-c5-v5"
+  exit 2
+fi
+
 step "1/6  real procurement corpus (Rule 8)"
 if [ -f data/raw/usaspending_awards.json ]; then
   echo "    cached corpus present; skipping fetch (delete data/raw to re-fetch)"

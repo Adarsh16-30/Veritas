@@ -47,9 +47,21 @@ run.
 This measures the false-commit fix (`bench/conditions.py`, version 3). It is
 the most important run left.
 
+First set the evidence-version-2 results aside. `bench.run` will not resume
+into a file recorded under different conditions, and `run_benchmark.sh` refuses
+to start until this is done:
+
 ```powershell
+git restore results/benchmark_ids.json; Remove-Item -ErrorAction SilentlyContinue results/corpus_plan_b6.json
+gbash scripts/archive_results.sh evidence-v2-b5-c5-v5
+git commit -m "Archive evidence-version-2 results (b5, c5, v5) before the v3 runs"
 gbash scripts/run_benchmark.sh        # defaults are now b6 / c6 / v6; resumable
 ```
+
+Push the archive commit **together with the results** at the end, not before:
+until the new runs exist, `results/` has no headline files, and CI's
+reproduction check fails. The runs record the archive commit, which becomes
+reachable once you push.
 
 If it stops partway, run the same command again: finished workflows are
 skipped. Then check two things in the new `docs/results.md`:
