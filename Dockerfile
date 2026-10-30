@@ -39,7 +39,16 @@ FROM ${PYTHON_IMAGE} AS runtime
 LABEL org.opencontainers.image.title="veritas" \
       org.opencontainers.image.description="Verification-gated procure-to-pay agent on ERPNext" \
       org.opencontainers.image.source="https://github.com/Adarsh16-30/Veritas"
-RUN groupadd --system --gid 10001 veritas \
+# Debian security updates on top of the pinned base, so a rebuild picks up fixes
+# (OpenSSL, perl, PCRE2, ...) without waiting for a new upstream tag. Then remove
+# the base image's own pip/setuptools/wheel: the service runs from /opt/venv and
+# needs no package manager, and those copies carry their own CVEs.
+# hadolint ignore=DL3005
+RUN apt-get update --error-on=any \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/* \
+ && python -m pip uninstall -y --disable-pip-version-check pip setuptools wheel \
+ && groupadd --system --gid 10001 veritas \
  && useradd --system --uid 10001 --gid veritas --no-create-home --shell /usr/sbin/nologin veritas
 COPY --from=build /opt/venv /opt/venv
 WORKDIR /app
