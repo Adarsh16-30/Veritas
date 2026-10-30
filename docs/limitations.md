@@ -641,10 +641,12 @@ rather than being engineered around.
 - **What was done.** `docs/provenance.md` maps each recorded commit to the
   published commit holding the same code. `scripts/check_provenance.py`, run by
   `check_rules.sh` and CI, fails on any recorded commit that is neither in the
-  history nor mapped. One mapping (v4, `a3a3e83` → `a2ce7a9`) was confirmed by
-  diff. The rest are **inferred** from run dates and the commits that recorded
-  them, and stay marked that way until someone diffs them against the originals
-  where those still exist. In the linear history, each commit that records a
+  history nor mapped. Six mappings are confirmed by diff against the original commits, which
+  still exist in the development clone: v4, and all five evidence-version-2
+  runs (b5, c5, v5, l1, demo). Those differ from the published code only in
+  comments and docstrings. Two older runs (the b4 baseline and the first,
+  pre-gap-fix benchmark) are gone from every clone. They stay **inferred**,
+  and no evidence-version-2 or later claim rests on them. In the linear history, each commit that records a
   result contains the code that run used. The service-hardening commits come
   after all recorded runs.
 
