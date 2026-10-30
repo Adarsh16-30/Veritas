@@ -140,10 +140,10 @@ class StepScopedERP(ERPClient):
         self._guard_write(str(doc.get("doctype") or ""))
         return super().submit(doc)
 
-    def call(self, dotted_path: str, **args: Any) -> Any:
+    def call(self, dotted_path: str, idempotent: bool = False, **args: Any) -> Any:
         if self._step is not None and dotted_path not in CALL_SCOPE[self._step]:
             raise ScopeError(f"{self._step} may not call {dotted_path!r}")
-        return super().call(dotted_path, **args)
+        return super().call(dotted_path, idempotent=idempotent, **args)
 
 
 def agent_client(url: str | None = None) -> ERPClient:

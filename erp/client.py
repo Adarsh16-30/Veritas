@@ -19,12 +19,20 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from decimal import Decimal
 from typing import Any, cast
 
 import requests
+
+from erp.resilience import (
+    RETRYABLE_STATUS,
+    InfrastructureUnavailable,
+    parse_retry_after,
+    retry_call,
+)
 
 IDEMPOTENCY_FIELD = "veritas_idempotency_key"
 
@@ -40,6 +48,25 @@ BUYING_CHAIN: tuple[str, ...] = (
 
 class ERPError(RuntimeError):
     """An ERPNext call failed. Carries the server's message for the trace."""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class ERPUnavailable(ERPError, InfrastructureUnavailable):
+    """ERPNext could not be reached, or answered "not now" (429/502/503/504).
+
+    Says nothing about the workflow. The pipeline lets it propagate and the
+    worker defers the workflow (erp/resilience.py). On a *write*, the request may
+    still have been applied; recovery goes through the idempotency key.
+    """
+
+    def __init__(
+        self, message: str, status_code: int | None = None, retry_after: float | None = None
+    ) -> None:
+        super().__init__(message, status_code)
+        self.retry_after = retry_after
 
 
 class ERPClient:
@@ -101,9 +128,40 @@ class ERPClient:
         yield
 
     # --- plumbing --------------------------------------------------------------
+    #: Read retries per call (erp/resilience.py). Writes are never retried here.
+    read_attempts = 3
+
+    def _sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+
+    def _send(self, verb: str, url: str, *, retry: bool, **kwargs: Any) -> Any:
+        """One HTTP call through the session; transport failures become ERPUnavailable.
+
+        ``retry=True`` only for calls that are safe to repeat: reads and the
+        read-only document mappers. A write is sent exactly once.
+        """
+
+        def once() -> Any:
+            try:
+                r = getattr(self.s, verb)(url, timeout=self.timeout, **kwargs)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                raise ERPUnavailable(f"ERPNext unreachable at {self.url}: {e}") from e
+            return self._check(r)
+
+        if not retry:
+            return once()
+        return retry_call(once, attempts=self.read_attempts, sleep=self._sleep)
+
     def _check(self, r: requests.Response) -> Any:
         if not r.ok:
-            raise ERPError(f"{r.request.method} {r.request.url} -> {r.status_code}: {r.text[:700]}")
+            message = f"{r.request.method} {r.request.url} -> {r.status_code}: {r.text[:700]}"
+            if r.status_code in RETRYABLE_STATUS:
+                raise ERPUnavailable(
+                    message,
+                    status_code=r.status_code,
+                    retry_after=parse_retry_after(r.headers.get("Retry-After")),
+                )
+            raise ERPError(message, status_code=r.status_code)
         try:
             body = r.json()
         except ValueError:
@@ -119,9 +177,7 @@ class ERPClient:
     def get(self, doctype: str, name: str) -> dict[str, Any]:
         return cast(
             "dict[str, Any]",
-            self._check(
-                self.s.get(f"{self.url}/api/resource/{doctype}/{name}", timeout=self.timeout)
-            ),
+            self._send("get", f"{self.url}/api/resource/{doctype}/{name}", retry=True),
         )
 
     def get_list(
@@ -138,11 +194,7 @@ class ERPClient:
             params["fields"] = json.dumps(fields)
         return cast(
             "list[dict[str, Any]]",
-            self._check(
-                self.s.get(
-                    f"{self.url}/api/resource/{doctype}", params=params, timeout=self.timeout
-                )
-            ),
+            self._send("get", f"{self.url}/api/resource/{doctype}", retry=True, params=params),
         )
 
     def exists(self, doctype: str, filters: list[Any]) -> str | None:
@@ -152,43 +204,45 @@ class ERPClient:
     def update(self, doctype: str, name: str, doc: dict[str, Any]) -> dict[str, Any]:
         return cast(
             "dict[str, Any]",
-            self._check(
-                self.s.put(
-                    f"{self.url}/api/resource/{doctype}/{name}",
-                    data={"data": json.dumps(doc)},
-                    timeout=self.timeout,
-                )
+            self._send(
+                "put",
+                f"{self.url}/api/resource/{doctype}/{name}",
+                retry=False,
+                data={"data": json.dumps(doc)},
             ),
         )
 
     def insert(self, doctype: str, doc: dict[str, Any]) -> dict[str, Any]:
         return cast(
             "dict[str, Any]",
-            self._check(
-                self.s.post(
-                    f"{self.url}/api/resource/{doctype}",
-                    data={"data": json.dumps({**doc, "doctype": doctype})},
-                    timeout=self.timeout,
-                )
+            self._send(
+                "post",
+                f"{self.url}/api/resource/{doctype}",
+                retry=False,
+                data={"data": json.dumps({**doc, "doctype": doctype})},
             ),
         )
 
     def submit(self, doc: dict[str, Any]) -> dict[str, Any]:
         return cast(
             "dict[str, Any]",
-            self._check(
-                self.s.post(
-                    f"{self.url}/api/method/frappe.client.submit",
-                    data={"doc": json.dumps(doc)},
-                    timeout=self.timeout,
-                )
+            self._send(
+                "post",
+                f"{self.url}/api/method/frappe.client.submit",
+                retry=False,
+                data={"doc": json.dumps(doc)},
             ),
         )
 
-    def call(self, dotted_path: str, **args: Any) -> Any:
+    def call(self, dotted_path: str, idempotent: bool = False, **args: Any) -> Any:
+        """Call a whitelisted server method.
+
+        ``idempotent=True`` marks a read-only method (the document mappers) that
+        is safe to retry. Anything else is sent once: a server method may write.
+        """
         payload = {k: (json.dumps(v) if isinstance(v, list | dict) else v) for k, v in args.items()}
-        return self._check(
-            self.s.post(f"{self.url}/api/method/{dotted_path}", data=payload, timeout=self.timeout)
+        return self._send(
+            "post", f"{self.url}/api/method/{dotted_path}", retry=idempotent, data=payload
         )
 
     # --- the one write primitive ------------------------------------------------
@@ -269,7 +323,8 @@ class ERPClient:
         self, material_request: str, supplier: str, rate: float, today: str, key: str
     ) -> dict[str, Any]:
         po: dict[str, Any] = self.call(
-            "erpnext.stock.doctype.material_request.material_request.make_purchase_order",
+            idempotent=True,
+            dotted_path="erpnext.stock.doctype.material_request.material_request.make_purchase_order",
             source_name=material_request,
         )
         po["supplier"] = supplier
@@ -292,7 +347,8 @@ class ERPClient:
         exists to catch. ``None`` receives exactly what was ordered.
         """
         pr: dict[str, Any] = self.call(
-            "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt",
+            idempotent=True,
+            dotted_path="erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt",
             source_name=purchase_order,
         )
         pr["posting_date"] = today
@@ -320,7 +376,8 @@ class ERPClient:
         ordered quantity at the agreed rate.
         """
         pi: dict[str, Any] = self.call(
-            "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice",
+            idempotent=True,
+            dotted_path="erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice",
             source_name=purchase_order,
         )
         pi["bill_no"] = bill_no
@@ -339,7 +396,8 @@ class ERPClient:
 
     def payment_entry_doc(self, purchase_invoice: str, today: str, key: str) -> dict[str, Any]:
         pe: dict[str, Any] = self.call(
-            "erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry",
+            idempotent=True,
+            dotted_path="erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry",
             dt="Purchase Invoice",
             dn=purchase_invoice,
         )
