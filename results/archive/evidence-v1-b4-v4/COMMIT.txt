@@ -1,0 +1,5 @@
+Evidence version 1 (single ERPNext identity), run tags b4 / v4, seed 7.
+baseline recorded by commit ee2f4aaffe44 (2026-09-24); verified completed on
+checkout 2594ba2 (2026-10-30), recorded in edf80b5.
+results.md / compounding_curve.svg here are the report generated from these files.
+Superseded for current claims by the evidence-version-2 runs b5 / c5 / v5.
