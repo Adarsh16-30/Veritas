@@ -687,3 +687,41 @@ capabilities dropped. Its memory under load is in `docs/operations.md`.
   is only as independent as those inputs.
 - **The base image is pinned by tag, not digest.** CI's trivy scan gates
   known vulnerabilities; pin the digest for a production deployment.
+
+### The PRD targets that are not met, and what is known about each (2026-10-30)
+
+Measured on b5 / c5 / v5 / l1 (evidence version 2); `docs/results.md` has the numbers.
+
+- **False-commit rate 26.1% against a ≤ 2% target: one cause, now addressed,
+  unmeasured.** All 12 wrong commits come from the two
+  `adversarial_injection_indirect` workflows that ran S1–S6 to completion. Each
+  missed workflow contributes six commits, while correctly stopped workflows
+  commit little, so 2 of 36 faulted workflows read as 26% of commits. The metric
+  is computed as defined (METRICS §1.4); the weakness is real. The cause was the
+  evidence: S1 asserted `item_description_free_of_instructions=True` from a
+  pattern list that the indirect payload is built to evade, and both prompts
+  tell the models to trust DELTA facts. Evidence version 3 renames the fact to
+  what it is (`item_description_passes_injection_screen`) and has both models
+  judge the quoted name themselves. **Whether this closes the gap, and what it
+  costs on clean controls, is unknown until b6 / v6 run.**
+- **ECE 0.128 against ≤ 0.05: partly a measurement-resolution problem.** Binned
+  ECE on about 170 held-out points is biased upward. For a perfectly calibrated
+  model with spread-out probabilities at n = 167, the mean is about 0.057, with
+  a 95% range of about 0.04–0.13. The 0.05 target cannot be confirmed at this
+  sample size even for a perfect model. `scripts/calibrate.py` now records a
+  bootstrap interval and that noise floor beside every ECE. Meeting the target
+  credibly needs a larger calibration split (several hundred labelled steps) as
+  well as a better fit.
+- **p95 latency 510 s against < 45 s (verified).** On the development laptop the
+  executor and verifier (two ~5 GB models in ~5 GB free RAM) are swapped in and
+  out on almost every step; the baseline, with one model, is 41.7 s. This needs
+  a machine that keeps both models resident (or `MODEL_BACKEND=openai` against
+  a served endpoint) before it says anything about the design.
+- **50 concurrent workflows on 4 workers: met for the baseline only.** l1 ran
+  the baseline configuration. The verified configuration under load is untested.
+- **Indirect injection: 2 of 4 caught (v5).** See the first point.
+- **Executor–verifier correlation 0.59** on paired steps (independence report).
+  The verifier is a different model family with the rationale withheld, but its
+  verdicts move with the executor's more than an independent check ideally would.
+  Its disagreement rate on known-wrong steps is 34%.
+- **No demo video.** `scripts/run_demo.sh` exists; the recording does not.

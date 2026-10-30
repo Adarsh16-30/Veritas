@@ -22,16 +22,18 @@
 # Run tags: a tag already used in the state store resumes the old workflows and
 # measures nothing. On a fresh clone the defaults are fine; on a store that has
 # seen earlier runs, set fresh tags, e.g.
-#   VERITAS_BASELINE_TAG=b5 VERITAS_VERIFIED_TAG=v5 VERITAS_CAL_TAG=c5 bash scripts/run_benchmark.sh
+#   VERITAS_BASELINE_TAG=b7 VERITAS_VERIFIED_TAG=v7 VERITAS_CAL_TAG=c7 bash scripts/run_benchmark.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 SEED="${VERITAS_SEED:-7}"
-BASE_TAG="${VERITAS_BASELINE_TAG:-b2}"
-VER_TAG="${VERITAS_VERIFIED_TAG:-v2}"
-CAL_TAG="${VERITAS_CAL_TAG:-c2}"
+# b1-b5, c5, v1-v5 and l1 are used on the development store; b6/c6/v6 are the
+# evidence-version-3 runs (bench/conditions.py).
+BASE_TAG="${VERITAS_BASELINE_TAG:-b6}"
+VER_TAG="${VERITAS_VERIFIED_TAG:-v6}"
+CAL_TAG="${VERITAS_CAL_TAG:-c6}"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
