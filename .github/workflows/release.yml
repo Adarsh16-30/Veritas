@@ -70,8 +70,10 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
+          # DL3006: `FROM ${PYTHON_IMAGE}` hides the tag from hadolint; the ARG's
+          # default pins it exactly (python:3.11.13-slim-bookworm).
           # DL3008/DL3013: the base image is pinned; pip installs a pinned uv.
-          ignore: DL3008,DL3013
+          ignore: DL3006,DL3008,DL3013
 
       - uses: docker/setup-buildx-action@v3
 
