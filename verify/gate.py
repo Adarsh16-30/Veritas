@@ -273,6 +273,7 @@ def build_gate(
     executor_model: str,
     verifier_llm: LLM | None = None,
     calibration_path: Path | str | None = None,
+    executor_family: str | None = None,
 ) -> VerificationGate:
     """Assemble the three gates.
 
@@ -292,6 +293,8 @@ def build_gate(
         calibration = CalibrationModel.load(path)
     return VerificationGate(
         rule_gate=RuleGate(erp, spec),
-        verifier=Verifier(verifier_llm, executor_model=executor_model),
+        verifier=Verifier(
+            verifier_llm, executor_model=executor_model, executor_family=executor_family
+        ),
         calibration=calibration,
     )

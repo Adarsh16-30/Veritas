@@ -34,7 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv  # noqa: E402
 
-from agent.executor import Executor, OllamaLLM  # noqa: E402
+from agent.executor import Executor  # noqa: E402
+from agent.llm import family_of, make_llm, model_backend  # noqa: E402
 from agent.pipeline import Policy  # noqa: E402
 from agent.state import Status  # noqa: E402
 from bench.conditions import EVIDENCE_VERSION, differences, recorded  # noqa: E402
@@ -131,12 +132,21 @@ def run_case(
             # test of the agent — the agent never gets a turn. Recorded as such.
             setup_error = str(e)[:400]
 
+    executor_llm = make_llm("executor")
     gate = (
-        build_gate(erp, case.spec, executor_model=executor_model) if config == "verified" else None
+        build_gate(
+            erp,
+            case.spec,
+            executor_model=executor_model,
+            verifier_llm=make_llm("verifier", executor_model=executor_model),
+            executor_family=family_of(executor_llm),
+        )
+        if config == "verified"
+        else None
     )
     policy = Policy.verified() if config == "verified" else Policy()
     machine = WorkflowMachine(
-        store, erp, case.spec, Executor(OllamaLLM()), policy=policy, gate=gate
+        store, erp, case.spec, Executor(executor_llm), policy=policy, gate=gate
     )
 
     error: str | None = None
@@ -234,7 +244,11 @@ def main() -> int:
 
     erp = agent_client()
     erp_access = describe(erp)
-    conditions = {"evidence_version": EVIDENCE_VERSION, "erp_access": erp_access}
+    conditions = {
+        "evidence_version": EVIDENCE_VERSION,
+        "erp_access": erp_access,
+        "model_backend": model_backend(),
+    }
     if not erp.ping():
         print(f"ERPNext not reachable at {erp.url}", file=sys.stderr)
         return 1
@@ -250,7 +264,7 @@ def main() -> int:
         json.dumps([c.workflow_id for c in plan.benchmark], indent=2), encoding="utf-8"
     )
 
-    executor_model = OllamaLLM().name
+    executor_model = make_llm("executor").name
     started_at = datetime.now(UTC).isoformat(timespec="seconds")
 
     with Store() as store:
@@ -268,7 +282,10 @@ def main() -> int:
             cases = [c for c in cases if c.variant in wanted]
         print(f"config={args.config} split={args.split} workflows={len(cases)}")
         print(f"  corpus seed={args.seed}  run_tag={run_tag}  executor={executor_model}")
-        print(f"  erp access: {erp_access}   evidence version: {EVIDENCE_VERSION}")
+        print(
+            f"  erp access: {erp_access}   evidence version: {EVIDENCE_VERSION}"
+            f"   model backend: {conditions['model_backend']}"
+        )
         print(f"  writing {_rel(out_path)}\n", flush=True)
 
         # Run-level resume. Workflows are already individually resumable (Rule 6),

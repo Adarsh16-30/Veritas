@@ -86,12 +86,35 @@ series carry `run="incomplete"` while a run is being resumed and a
 
 `bench/conditions.py`. Every results file records its `evidence_version`
 (bumped by hand when a change alters what the models see or how the corpus is
-built) and its `erp_access`. `bench.run --resume` refuses to continue a run
+built), its `erp_access` and its `model_backend`. `bench.run --resume` refuses to continue a run
 under different conditions, and also refuses a fresh run on a tag already in
 the store, or a resume into another run's file. `bench.report` and
 `bench.plots` refuse a delta across conditions. Version 1 is b4/v4; version 2
 adds untrusted-text quarantine, the boundary rounding fix and recorded ERP
 reads.
+
+## Model backends (production hardening)
+
+`agent/llm.py`. `Executor` and `Verifier` depend only on the `LLM` protocol, so
+the backend is configuration. `MODEL_BACKEND=ollama` (the default) is exactly
+what every recorded run used. `MODEL_BACKEND=openai` serves both roles from any
+OpenAI-compatible `/v1/chat/completions` endpoint: vLLM, Ollama's `/v1` or a
+hosted provider. Requests use JSON mode, temperature 0 and a fixed seed where
+the server honours it. Each endpoint has a per-process concurrency cap and an
+optional token-bucket rate limit, so a provider's limit is met by waiting rather
+than by collecting 429s.
+
+Rule 3 is judged on model families. An Ollama tag carries its family in its name
+(`llama3:8b` → `llama3`); an OpenAI-style id does not, and comparing names
+would call `Llama-3.1-8B` and `Llama-3.1-70B` independent. So each
+OpenAI-compatible model must declare `EXECUTOR_FAMILY` / `VERIFIER_FAMILY`. The
+trace records both families, and production refuses equal ones
+(`orchestrator/settings.py`).
+
+Outages are typed. A refused connection, 429 or 5xx is `ModelUnavailable` and is
+retried briefly. A read timeout or rejected credentials is `ModelUnavailable`
+and is not retried. A bad answer is `ExecutorError`, retried under Rule 7's cap
+as before.
 
 ## Injection hardening (Phase 6, evidence version 2)
 

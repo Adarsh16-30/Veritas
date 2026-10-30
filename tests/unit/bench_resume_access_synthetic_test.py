@@ -8,8 +8,10 @@ from bench.run import resume_conflict
 SINGLE = "single identity"
 
 
-def _now(access: str = SINGLE, version: int = EVIDENCE_VERSION) -> dict[str, object]:
-    return {"evidence_version": version, "erp_access": access}
+def _now(
+    access: str = SINGLE, version: int = EVIDENCE_VERSION, backend: str = "ollama"
+) -> dict[str, object]:
+    return {"evidence_version": version, "erp_access": access, "model_backend": backend}
 
 
 def test_results_written_before_the_fields_existed_are_legacy_conditions() -> None:
@@ -18,6 +20,14 @@ def test_results_written_before_the_fields_existed_are_legacy_conditions() -> No
     assert resume_conflict(v4, _now(version=1)) is None
     conflict = resume_conflict(v4, _now())
     assert conflict is not None and "evidence_version" in conflict
+
+
+def test_a_run_recorded_on_one_model_backend_never_resumes_on_another() -> None:
+    """Files from before the field existed were all served by local Ollama."""
+    legacy = {"evidence_version": EVIDENCE_VERSION, "erp_access": SINGLE}
+    assert resume_conflict(legacy, _now()) is None
+    conflict = resume_conflict(legacy, _now(backend="openai"))
+    assert conflict is not None and "model_backend" in conflict
 
 
 def test_same_conditions_resume_and_any_difference_refuses() -> None:

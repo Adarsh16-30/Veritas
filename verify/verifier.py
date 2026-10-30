@@ -163,10 +163,23 @@ class IndependenceSpec:
     executor_model: str
     verifier_model: str
     distinct_framing: bool = True
+    #: Declared families (OpenAI-compatible backends, agent/llm.py). A model id
+    #: such as ``meta-llama/Llama-3.1-8B`` does not name its family the way an
+    #: Ollama tag does, so a declared family wins over one read from the name.
+    executor_family: str | None = None
+    verifier_family: str | None = None
+
+    @property
+    def families(self) -> tuple[str, str]:
+        return (
+            (self.executor_family or model_family(self.executor_model)).strip().lower(),
+            (self.verifier_family or model_family(self.verifier_model)).strip().lower(),
+        )
 
     @property
     def distinct_model(self) -> bool:
-        return model_family(self.executor_model) != model_family(self.verifier_model)
+        executor, verifier = self.families
+        return executor != verifier
 
     @property
     def independent(self) -> bool:
@@ -176,6 +189,8 @@ class IndependenceSpec:
         return {
             "executor_model": self.executor_model,
             "verifier_model": self.verifier_model,
+            "executor_family": self.families[0],
+            "verifier_family": self.families[1],
             "distinct_model": self.distinct_model,
             "distinct_framing": self.distinct_framing,
             "independent": self.independent,
@@ -263,12 +278,20 @@ def strip_rejection_notes(step_context: str) -> str:
 
 
 class Verifier:
-    def __init__(self, llm: LLM, executor_model: str, distinct_framing: bool = True) -> None:
+    def __init__(
+        self,
+        llm: LLM,
+        executor_model: str,
+        distinct_framing: bool = True,
+        executor_family: str | None = None,
+    ) -> None:
         self.llm = llm
         self.independence = IndependenceSpec(
             executor_model=executor_model,
             verifier_model=llm.name,
             distinct_framing=distinct_framing,
+            executor_family=executor_family,
+            verifier_family=getattr(llm, "family", None),
         )
         if not self.independence.independent:
             raise VerifierError(

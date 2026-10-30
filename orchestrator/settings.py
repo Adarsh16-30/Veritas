@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     verifier_family: str | None = None
     model_timeout_s: int = Field(default=180, ge=5, le=900)
     model_max_concurrency: int = Field(default=2, ge=1, le=64)
+    model_rate_limit_per_min: int = Field(default=0, ge=0, le=100_000)  # 0 = off
 
     # --- worker -----------------------------------------------------------------
     worker_concurrency: int = Field(default=1, ge=1, le=32)
