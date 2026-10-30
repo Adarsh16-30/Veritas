@@ -1,0 +1,118 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "veritas.serviceAccountName" . }}
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+  {{- with .Values.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+# The workloads never call the Kubernetes API.
+automountServiceAccountToken: false
+{{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "veritas.fullname" . }}
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # Only the API. Health and metrics stay inside the cluster.
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "veritas.fullname" . }}-api
+                port: {name: http}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "veritas.fullname" . }}-default-deny
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "veritas.fullname" . }}-api-ingress
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "veritas.selector" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+      ports:
+        - {port: {{ .Values.api.port }}, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "veritas.fullname" . }}-worker-metrics
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "veritas.selector" (dict "root" . "component" "worker") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+      ports:
+        - {port: {{ .Values.worker.healthPort }}, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "veritas.fullname" . }}-egress
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    - ports:  # DNS
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - ports:  # Postgres, Redis, ERPNext, model endpoints
+        {{- range .Values.networkPolicy.egressPorts }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+{{- end }}

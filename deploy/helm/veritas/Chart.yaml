@@ -1,0 +1,10 @@
+apiVersion: v2
+name: veritas
+description: Verification-gated procure-to-pay agent on ERPNext (API, worker, migrations).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/Adarsh16-30/Veritas
+sources:
+  - https://github.com/Adarsh16-30/Veritas
+keywords: [erpnext, procurement, agent, verification]

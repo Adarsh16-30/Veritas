@@ -1,0 +1,14 @@
+VERITAS {{ .Chart.AppVersion }} is installed as {{ include "veritas.fullname" . }}.
+
+1. The migration Job ran before this release (orchestrator/migrations/).
+2. Issue API keys (shown once):
+     kubectl exec deploy/{{ include "veritas.fullname" . }}-api -- \
+       python scripts/create_api_client.py --id intake --name Intake --roles submitter
+   Use a different client for approvers: a client cannot decide its own request.
+3. Check readiness:
+     kubectl port-forward svc/{{ include "veritas.fullname" . }}-api 8090:80
+     curl localhost:8090/readyz
+{{- if eq .Values.config.VERITAS_ENV "production" }}
+Production mode: the pods refuse to start without the buyer key, with the
+default database password, with a non-TLS sslmode, or with equal model families.
+{{- end }}
