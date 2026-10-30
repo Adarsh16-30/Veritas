@@ -1,0 +1,8 @@
+baseline_results.json: run tag b5, evidence version 2, commit ba2f99f681cf, erp access step-scoped (S1-S3 buyer identity, S4-S6 finance identity)
+calibration.json: commit 3bcff49fe50b
+calibration_curves.json: commit 3bcff49fe50b
+calibration_run.json: run tag c5, evidence version 2, commit 3bcff49fe50b, erp access step-scoped (S1-S3 buyer identity, S4-S6 finance identity)
+independence_report.json: commit 684a2e279c6a
+ledger_reconciliation.json: derived report; see the run files above
+verified_results.json: run tag v5, evidence version 2, commit 684a2e279c6a, erp access step-scoped (S1-S3 buyer identity, S4-S6 finance identity)
+results.md / compounding_curve.svg here are the report generated from these files.
