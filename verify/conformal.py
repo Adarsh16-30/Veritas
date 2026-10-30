@@ -419,6 +419,48 @@ def ece(probs: Sequence[float], truths: Sequence[str], bins: int = 10) -> float:
     return total
 
 
+def ece_uncertainty(
+    probs: Sequence[float],
+    truths: Sequence[str],
+    *,
+    resamples: int = 1000,
+    seed: int = 7,
+    bins: int = 10,
+) -> dict[str, float]:
+    """How far a measured ECE can be trusted at this sample size.
+
+    Binned ECE is biased upward on small samples: a perfectly calibrated model
+    still scores above zero, because each bin's accuracy is estimated from a
+    handful of points. Without these two numbers an ECE of 0.12 on 170 points
+    cannot be told apart from noise around a target of 0.05.
+
+    * ``ece_ci_low``/``ece_ci_high``: 95% bootstrap interval of the measured ECE.
+    * ``ece_noise_floor``: mean ECE of a *perfectly calibrated* model with these
+      same probabilities, outcomes drawn from them. Measured ECE near the floor
+      means the sample cannot resolve the remaining miscalibration.
+    """
+    import random
+
+    rng = random.Random(seed)
+    n = len(probs)
+    if n == 0:
+        raise ValueError("ECE is undefined for zero predictions")
+    boot = []
+    for _ in range(resamples):
+        idx = [rng.randrange(n) for _ in range(n)]
+        boot.append(ece([probs[i] for i in idx], [truths[i] for i in idx], bins))
+    boot.sort()
+    floor = []
+    for _ in range(resamples):
+        drawn = [COMMIT if rng.random() < p else ESCALATE for p in probs]
+        floor.append(ece(probs, drawn, bins))
+    return {
+        "ece_ci_low": boot[int(0.025 * resamples)],
+        "ece_ci_high": boot[int(0.975 * resamples) - 1],
+        "ece_noise_floor": sum(floor) / resamples,
+    }
+
+
 def brier(probs: Sequence[float], truths: Sequence[str]) -> float:
     """Brier score with ``y_i = 1`` when the true label is ``commit`` (METRICS §3.2)."""
     if not probs:
@@ -516,5 +558,11 @@ def evaluate(
         brier_post=brier(post, truths),
         coverage=coverage(regions, truths),
         avg_region_size=avg_region_size(regions),
-        extra={"qhat": cal.qhat, "n_calibration": cal.n_calibration, "commit": cal.commit},
+        extra={
+            "qhat": cal.qhat,
+            "n_calibration": cal.n_calibration,
+            "commit": cal.commit,
+            # How much of ece_post this sample can resolve (METRICS §3.1).
+            **{f"post_{k}": v for k, v in ece_uncertainty(post, truths).items()},
+        },
     )
