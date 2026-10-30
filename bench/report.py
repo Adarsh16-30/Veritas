@@ -163,7 +163,8 @@ def render(
         lines += ["## INCOMPLETE RUN — no delta reported", ""]
         for name, missing in incomplete.items():
             payload = baseline if name == "baseline" else verified
-            assert payload is not None
+            if payload is None:  # `incomplete` holds only files that were read
+                continue
             expected = len(payload.get("benchmark_ids", []))
             lines.append(
                 f"- **{name}**: {expected - len(missing)} of {expected} benchmark workflows "

@@ -16,12 +16,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import requests
 
 from agent.state import Action, StepContext
+from erp.resilience import InfrastructureUnavailable, parse_retry_after, retry_call
 
 SYSTEM_PROMPT = """You are a procurement control operating on a live accounting ledger.
 A wrong step moves real money, so you are cautious by default.
@@ -58,6 +60,21 @@ class ExecutorError(RuntimeError):
     """The model call failed, or its answer was not usable."""
 
 
+class ModelUnavailable(ExecutorError, InfrastructureUnavailable):
+    """The model server could not be reached or could not serve the request.
+
+    An outage, not an answer: the pipeline lets it propagate instead of feeding
+    it back into the prompt and spending a bounded retry on it (Rule 7), and the
+    worker defers the workflow. Still an ``ExecutorError``, so a caller that only
+    knows that type keeps working.
+    """
+
+
+#: Model-server statuses that say nothing about the prompt. 500 is included:
+#: Ollama answers 500 when its runner dies or runs out of memory.
+MODEL_UNAVAILABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
 class LLM(Protocol):
     """Provider-agnostic completion. PRD §2.3 fixes this as configuration."""
 
@@ -78,6 +95,7 @@ class OllamaLLM:
         num_predict: int = 220,
         timeout: int = 180,
         num_gpu: int | None = None,
+        attempts: int = 3,
     ) -> None:
         self.name = model or os.environ.get("OLLAMA_MODEL", "llama3:8b-instruct-q4_K_M")
         self.url = (url or os.environ.get("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
@@ -91,8 +109,18 @@ class OllamaLLM:
         # costs far more than running the second model on CPU. Set per-model, so
         # the deployment decides; nothing here assumes a particular machine.
         self.num_gpu = num_gpu
+        self.attempts = attempts
+        self._sleep = time.sleep
 
     def complete(self, system: str, user: str) -> str:
+        """One completion. A refused connection or a "not now" status is retried
+        briefly; a read timeout is not -- the server was busy for ``timeout``
+        seconds and asking again at once only doubles the wait."""
+        return retry_call(
+            lambda: self._complete_once(system, user), attempts=self.attempts, sleep=self._sleep
+        )
+
+    def _complete_once(self, system: str, user: str) -> str:
         try:
             r = requests.post(
                 f"{self.url}/api/generate",
@@ -111,8 +139,16 @@ class OllamaLLM:
                 },
                 timeout=self.timeout,
             )
+        except requests.Timeout as e:
+            # The message text is what bench.run's infrastructure markers match.
+            raise ModelUnavailable(f"ollama unreachable at {self.url}: {e}", retryable=False) from e
         except requests.RequestException as e:
-            raise ExecutorError(f"ollama unreachable at {self.url}: {e}") from e
+            raise ModelUnavailable(f"ollama unreachable at {self.url}: {e}") from e
+        if r.status_code in MODEL_UNAVAILABLE_STATUS:
+            raise ModelUnavailable(
+                f"ollama unreachable at {self.url}: {r.status_code} {r.text[:300]}",
+                retry_after=parse_retry_after(r.headers.get("Retry-After")),
+            )
         if not r.ok:
             raise ExecutorError(f"ollama {r.status_code}: {r.text[:300]}")
         body = r.json()

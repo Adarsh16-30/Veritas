@@ -5,9 +5,33 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-test-rules:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A real Postgres, so the store, migration, explorer and service tests run here
+    # instead of skipping. Each of those tests works in a throwaway schema.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: veritas
+          POSTGRES_USER: veritas
+          POSTGRES_PASSWORD: veritas
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U veritas"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,13 +49,20 @@ jobs:
       - name: sync deps
         run: uv sync --group dev
 
-      - name: ruff lint
+      # The queue, lease and service tests start their own throwaway redis-server.
+      - name: redis-server binary
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq redis-server
+          sudo systemctl stop redis-server || true
+
+      - name: ruff lint (includes bandit rules on non-test code)
         run: uv run ruff check .
 
       - name: ruff format check
         run: uv run ruff format --check .
 
-      - name: pytest (integration auto-skips without a running ERPNext)
+      - name: pytest (ERPNext/Ollama integration tests auto-skip)
         run: uv run pytest
 
       - name: mypy strict
@@ -42,3 +73,9 @@ jobs:
 
       - name: non-negotiable rule check
         run: bash scripts/check_rules.sh
+
+      - name: dependency audit
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project \
+            --format requirements-txt > /tmp/requirements.txt
+          uvx pip-audit==2.9.0 --strict -r /tmp/requirements.txt

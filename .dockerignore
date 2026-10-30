@@ -1,0 +1,23 @@
+# The image takes only what the Dockerfile COPYs, but the build context should
+# never carry credentials, history or local state either.
+.env
+.env.*
+!.env.example
+secrets/
+.git/
+.github/
+.venv/
+.claude/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+graphify-out/
+infra/docker-compose/volumes/
+tests/
+docs/
+ui/node_modules/
+results/*
+!results/calibration.json
+*.md

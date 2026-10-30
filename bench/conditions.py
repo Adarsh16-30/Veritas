@@ -11,6 +11,9 @@ being resumed over days, and both have already cost this project a re-run
   change, and the changelog below says why. It is a manual convention because
   no file fingerprint can tell a comment edit from a change in evidence.
 * **Which ERP identity ran each step** (``erp.scoped.describe``).
+* **Which model backend served the models** (``agent.llm.model_backend``): the
+  same weights behind Ollama and behind vLLM are not guaranteed to decode
+  identically, and a hosted model is not the local one.
 
 ``bench.run`` records both in every results file, refuses to ``--resume`` a run
 under different conditions, and ``bench.report`` refuses to compute a delta
@@ -33,7 +36,7 @@ from typing import Any
 EVIDENCE_VERSION = 2
 
 #: What a results file written before these fields existed was recorded under.
-LEGACY = {"evidence_version": 1, "erp_access": "single identity"}
+LEGACY = {"evidence_version": 1, "erp_access": "single identity", "model_backend": "ollama"}
 
 
 def recorded(payload: dict[str, Any]) -> dict[str, Any]:

@@ -36,6 +36,9 @@ from erp.resilience import (
 
 IDEMPOTENCY_FIELD = "veritas_idempotency_key"
 
+#: Frappe ``docstatus``: 0 draft, 1 submitted, 2 cancelled.
+DOCSTATUS_DRAFT, DOCSTATUS_SUBMITTED, DOCSTATUS_CANCELLED = 0, 1, 2
+
 #: DocTypes the agent submits, in buying-chain order.
 BUYING_CHAIN: tuple[str, ...] = (
     "Material Request",
@@ -259,21 +262,27 @@ class ERPClient:
         return str(name)
 
     def find_by_idempotency_key(self, doctype: str, key: str) -> str | None:
-        """Find an already-submitted document carrying this idempotency key.
+        """Find a document carrying this idempotency key, preferring a submitted one.
 
         This is the crash-recovery read (Rule 6): it closes the window between
-        ERPNext accepting a submit and Postgres recording the key.
+        ERPNext accepting a submit and Postgres recording the key. Recovery
+        itself uses ``find_by_idempotency_key_with_status``, which also says
+        whether the document was ever submitted.
         """
+        found = self.find_by_idempotency_key_with_status(doctype, key)
+        return found[0] if found else None
+
+    def find_by_idempotency_key_with_status(self, doctype: str, key: str) -> tuple[str, int] | None:
+        """``(name, docstatus)`` of the document carrying this key, submitted first."""
         rows = self.get_list(
             doctype,
             filters=[[IDEMPOTENCY_FIELD, "=", key]],
             fields=["name", "docstatus"],
-            limit=2,
+            limit=5,
         )
-        for r in rows:
-            if int(r.get("docstatus", 0)) == 1:
-                return str(r["name"])
-        return str(rows[0]["name"]) if rows else None
+        rank = {DOCSTATUS_SUBMITTED: 0, DOCSTATUS_DRAFT: 1, DOCSTATUS_CANCELLED: 2}
+        rows.sort(key=lambda r: rank.get(int(r.get("docstatus", 0)), 3))
+        return (str(rows[0]["name"]), int(rows[0].get("docstatus", 0))) if rows else None
 
     # --- ledger reads -----------------------------------------------------------
     def gl_entries(self, voucher_nos: list[str]) -> list[dict[str, Any]]:

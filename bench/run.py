@@ -34,12 +34,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv  # noqa: E402
 
-from agent.executor import Executor, OllamaLLM  # noqa: E402
+from agent.executor import Executor  # noqa: E402
+from agent.llm import family_of, make_llm, model_backend  # noqa: E402
 from agent.pipeline import Policy  # noqa: E402
 from agent.state import Status  # noqa: E402
 from bench.conditions import EVIDENCE_VERSION, differences, recorded  # noqa: E402
 from data.corpus import seed  # noqa: E402
 from erp.client import ERPClient, ERPError  # noqa: E402
+from erp.resilience import InfrastructureUnavailable  # noqa: E402
 from erp.scoped import agent_client, describe  # noqa: E402
 from harness.corpus import (  # noqa: E402
     VARIANTS,
@@ -82,6 +84,11 @@ INFRASTRUCTURE_MARKERS: tuple[str, ...] = (
     "WinError 10061",
     "Failed to establish a new connection",
     "Read timed out",
+    # Typed outages (erp/resilience.py) now propagate instead of escalating, and
+    # reach here as "<ClassName>: <message>".
+    "InfrastructureUnavailable",
+    "ERPUnavailable",
+    "ModelUnavailable",
 )
 
 
@@ -125,12 +132,21 @@ def run_case(
             # test of the agent — the agent never gets a turn. Recorded as such.
             setup_error = str(e)[:400]
 
+    executor_llm = make_llm("executor")
     gate = (
-        build_gate(erp, case.spec, executor_model=executor_model) if config == "verified" else None
+        build_gate(
+            erp,
+            case.spec,
+            executor_model=executor_model,
+            verifier_llm=make_llm("verifier", executor_model=executor_model),
+            executor_family=family_of(executor_llm),
+        )
+        if config == "verified"
+        else None
     )
     policy = Policy.verified() if config == "verified" else Policy()
     machine = WorkflowMachine(
-        store, erp, case.spec, Executor(OllamaLLM()), policy=policy, gate=gate
+        store, erp, case.spec, Executor(executor_llm), policy=policy, gate=gate
     )
 
     error: str | None = None
@@ -153,9 +169,12 @@ def run_case(
     except Exception as e:  # noqa: BLE001 - a crashed workflow is a recorded result
         status, reason, docs, steps = Status.FAILED, f"{type(e).__name__}: {e}"[:400], {}, []
         error = reason
+        outage = isinstance(e, InfrastructureUnavailable)
+    else:
+        outage = False
 
     label = case.label_row()
-    infrastructure = is_infrastructure_failure(reason) or is_infrastructure_failure(error)
+    infrastructure = outage or is_infrastructure_failure(reason) or is_infrastructure_failure(error)
     return {
         **label,
         "variant": case.variant,
@@ -225,7 +244,11 @@ def main() -> int:
 
     erp = agent_client()
     erp_access = describe(erp)
-    conditions = {"evidence_version": EVIDENCE_VERSION, "erp_access": erp_access}
+    conditions = {
+        "evidence_version": EVIDENCE_VERSION,
+        "erp_access": erp_access,
+        "model_backend": model_backend(),
+    }
     if not erp.ping():
         print(f"ERPNext not reachable at {erp.url}", file=sys.stderr)
         return 1
@@ -241,7 +264,7 @@ def main() -> int:
         json.dumps([c.workflow_id for c in plan.benchmark], indent=2), encoding="utf-8"
     )
 
-    executor_model = OllamaLLM().name
+    executor_model = make_llm("executor").name
     started_at = datetime.now(UTC).isoformat(timespec="seconds")
 
     with Store() as store:
@@ -259,7 +282,10 @@ def main() -> int:
             cases = [c for c in cases if c.variant in wanted]
         print(f"config={args.config} split={args.split} workflows={len(cases)}")
         print(f"  corpus seed={args.seed}  run_tag={run_tag}  executor={executor_model}")
-        print(f"  erp access: {erp_access}   evidence version: {EVIDENCE_VERSION}")
+        print(
+            f"  erp access: {erp_access}   evidence version: {EVIDENCE_VERSION}"
+            f"   model backend: {conditions['model_backend']}"
+        )
         print(f"  writing {_rel(out_path)}\n", flush=True)
 
         # Run-level resume. Workflows are already individually resumable (Rule 6),

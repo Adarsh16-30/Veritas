@@ -206,7 +206,8 @@ def main() -> int:
     from dotenv import load_dotenv
 
     load_dotenv()
-    from agent.executor import Executor, OllamaLLM
+    from agent.executor import Executor
+    from agent.llm import family_of, make_llm, model_backend
     from agent.pipeline import Policy
     from bench.conditions import EVIDENCE_VERSION
     from bench.run import _commit_sha, tag_conflict
@@ -243,11 +244,21 @@ def main() -> int:
     def make_runner() -> Runner:
         store = Store()  # one connection per worker: Store is not thread-safe
         worker_erp = agent_client()
-        llm = OllamaLLM()
+        llm = make_llm("executor")
 
         def run(workflow_id: str) -> str:
             case = by_id[workflow_id]
-            gate = build_gate(worker_erp, case.spec, executor_model=llm.name) if verified else None
+            gate = (
+                build_gate(
+                    worker_erp,
+                    case.spec,
+                    executor_model=llm.name,
+                    verifier_llm=make_llm("verifier", executor_model=llm.name),
+                    executor_family=family_of(llm),
+                )
+                if verified
+                else None
+            )
             machine = WorkflowMachine(
                 store, worker_erp, case.spec, Executor(llm), policy=policy, gate=gate
             )
@@ -280,6 +291,7 @@ def main() -> int:
             "run_tag": args.run_tag,
             "evidence_version": EVIDENCE_VERSION,
             "erp_access": describe(erp),
+            "model_backend": model_backend(),
             "commit": _commit_sha(),
             "started_at": started_at,
             "completed_at": datetime.now(UTC).isoformat(timespec="seconds"),

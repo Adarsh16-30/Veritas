@@ -22,11 +22,12 @@ the real ledger is a real duplicate invoice. See [`docs/limitations.md`](docs/li
 |---|---|
 | 1 · Real environment foundation | complete |
 | 2 · Baseline agent (no verifier) | complete — `Pipeline(gate=None)` |
-| 3 · Verification gate | complete except ECE ≤ 0.05 (no calibration fitted yet) |
-| **4 · Fault-injection benchmark** | built; the v4 re-run (evidence version 1) is being completed |
+| 3 · Verification gate | complete; conformal router fitted on the disjoint calibration run (c5). The PRD's ECE ≤ 0.05 and coverage ≥ 0.9 targets are **not met** (see `docs/results.md`) |
+| 4 · Fault-injection benchmark | complete — evidence version 1 (b4/v4, archived) and version 2 (b5/v5) recorded |
 | 5 · Trace explorer | built — `scripts/trace_explorer.py`; records each step's ERP reads from evidence version 2 |
-| 6 · Hardening & observability | built, measurement pending — metrics + Grafana, step-scoped ERP access, untrusted-text quarantine, load-test driver; each needs a live run (see `docs/limitations.md`) |
-| 7 · End-to-end demo & writeup | demo built (`scripts/run_demo.sh`); writeup waits for measured v4/v5 numbers |
+| 6 · Hardening & observability | built — metrics + Grafana, step-scoped ERP access, untrusted-text quarantine; load test l1 recorded |
+| 7 · End-to-end demo & writeup | demo recorded (`scripts/run_demo.sh`, n = 1 per class) |
+| Production service | built — HTTP API, queue worker, migrations, human escalation queue, image, Helm chart, CI/CD. Tested against a real Postgres and Redis; **not yet run end-to-end against a live ERPNext and models** (`docs/limitations.md`) |
 
 Every number this project reports comes from a results file and is cited in
 [`docs/results.md`](docs/results.md); nothing on this page is a measurement.
@@ -185,13 +186,51 @@ the models see or how the corpus is built changes) and its ERP access model.
 `bench.run` will not resume a run under different conditions, or start one on
 a used run tag. The report and the chart will not compare across them.
 
+## Running it as a service
+
+The benchmark drives workflows from the fault harness. The service takes real
+procurement requests over HTTP, runs each through the verified pipeline in a
+queue worker, and parks anything the gate will not commit in a human
+escalation queue. Details: [`docs/operations.md`](docs/operations.md) (run,
+failure behaviour, memory) and [`docs/security.md`](docs/security.md) (threat
+model).
+
+```bash
+# On the laptop: the image, then the service beside the existing stack.
+docker build -t veritas:dev .
+docker compose -f infra/docker-compose/stack.yml -f infra/docker-compose/service.yml up -d
+
+# API keys are shown once. Submitters and approvers must be different clients.
+docker compose -f infra/docker-compose/stack.yml -f infra/docker-compose/service.yml \
+  run --rm veritas-migrate python scripts/create_api_client.py --id intake --name Intake --roles submitter
+
+curl -s localhost:8090/v1/workflows -H "Authorization: Bearer $KEY" \
+  -H "Idempotency-Key: po-2026-0001" -H "Content-Type: application/json" \
+  -d '{"item_code": "USA-272060915", "qty": 10, "supplier": "Acme", "rate": 125.5,
+       "needed_by": "2026-12-01", "bill_no": "INV-0001"}'
+```
+
+| Endpoint | Role | What it does |
+|---|---|---|
+| `POST /v1/workflows` | submitter | Submit a request. `Idempotency-Key` required: a replay returns the original workflow, never a second one. |
+| `GET /v1/workflows/{id}` | submitter (own), approver, viewer | Status, current step, ERPNext documents (with links), decisions. |
+| `GET /v1/escalations` | approver, viewer | The human queue, each item saying whether it can be approved and why. |
+| `POST /v1/escalations/{id}/decisions` | approver | `reject` or `approve_and_resume`. Separation of duties is enforced; hard-rule violations are never approvable. |
+| `GET /healthz`, `/readyz`, `/metrics` | — | Liveness, readiness (Postgres and Redis), request metrics. |
+
+Models: `MODEL_BACKEND=ollama` (default) or `openai` for any OpenAI-compatible
+endpoint, with each model's family declared for Rule 3 (`agent/llm.py`).
+Kubernetes: `deploy/helm/veritas` (`values-laptop.yaml` for kind/minikube).
+
 ## Repo layout
 
 `erp/` ERPNext REST client · `agent/` context + executor · `verify/` rules +
 independent verifier + conformal · `orchestrator/` durable state machine ·
 `harness/` fault injector + labels · `data/` real dataset loaders · `trace/`
 append-only store + query API · `bench/` runner + metrics + ledger reconciliation
-· `ui/` trace explorer · `docs/` metrics, architecture, results, limitations.
+· `ui/` trace explorer · `service/` HTTP API + queue worker ·
+`orchestrator/migrations/` schema migrations · `deploy/helm/` Kubernetes chart ·
+`docs/` metrics, architecture, results, limitations, operations, security.
 
 ## Rules
 
@@ -202,7 +241,8 @@ Ten non-negotiable rules (`docs/ENGINEERING_RULES.md` §2) are enforced by
 
 ```bash
 uv run ruff check . && uv run ruff format --check .
-uv run pytest
+uv run mypy --strict
+uv run pytest          # DB/queue tests need Postgres (POSTGRES_*) and a redis-server binary
 bash scripts/check_rules.sh
 ```
 

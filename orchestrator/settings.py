@@ -21,6 +21,7 @@ environment directly; the service builds its clients from this object.
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -90,6 +91,7 @@ class Settings(BaseSettings):
     verifier_family: str | None = None
     model_timeout_s: int = Field(default=180, ge=5, le=900)
     model_max_concurrency: int = Field(default=2, ge=1, le=64)
+    model_rate_limit_per_min: int = Field(default=0, ge=0, le=100_000)  # 0 = off
 
     # --- worker -----------------------------------------------------------------
     worker_concurrency: int = Field(default=1, ge=1, le=32)
@@ -99,10 +101,14 @@ class Settings(BaseSettings):
     defer_base_s: int = Field(default=30, ge=1, le=3600)
     breaker_failures: int = Field(default=5, ge=1, le=1000)
     breaker_cooldown_s: int = Field(default=60, ge=1, le=3600)
+    worker_poll_s: int = Field(default=5, ge=1, le=60)
+    requeue_interval_s: int = Field(default=300, ge=30, le=86_400)
+    worker_health_host: str = "127.0.0.1"
+    worker_health_port: int = Field(default=9109, ge=1, le=65535)
 
     # --- API --------------------------------------------------------------------
     api_host: str = "127.0.0.1"
-    api_port: int = Field(default=8080, ge=1, le=65535)
+    api_port: int = Field(default=8090, ge=1, le=65535)  # ERPNext holds 8080
     api_rate_limit_per_min: int = Field(default=60, ge=1, le=100_000)
     api_max_body_bytes: int = Field(default=65_536, ge=1024, le=10_485_760)
 
@@ -174,6 +180,10 @@ class Settings(BaseSettings):
 
 def load_settings(**overrides: Any) -> Settings:
     """Read and validate; in production, refuse an unsafe configuration."""
+    if sys.flags.optimize:
+        # `python -O` strips every assert, including PRD §9.4's guard that the
+        # verifier never sees the executor's rationale (Rule 3).
+        raise SettingsError("refusing to run under python -O: it strips PRD §9 guards")
     try:
         settings = Settings(**overrides)
     except ValueError as e:

@@ -100,7 +100,7 @@ def main() -> int:
     from dotenv import load_dotenv
 
     load_dotenv()
-    from agent.executor import OllamaLLM
+    from agent.llm import make_llm, model_backend
     from bench.conditions import EVIDENCE_VERSION
     from bench.run import _commit_sha, run_case, tag_conflict
     from data.corpus import seed
@@ -112,7 +112,7 @@ def main() -> int:
     if not erp.ping():
         print(f"ERPNext not reachable at {erp.url}", file=sys.stderr)
         return 1
-    executor_model = OllamaLLM().name
+    executor_model = make_llm("executor").name
     stamp = int(time.time())
     tags = {"baseline": f"db{stamp}", "verified": f"dv{stamp}"}
 
@@ -155,6 +155,7 @@ def main() -> int:
                 "tags": tags,
                 "evidence_version": EVIDENCE_VERSION,
                 "erp_access": describe(erp),
+                "model_backend": model_backend(),
                 "executor_model": executor_model,
                 "commit": _commit_sha(),
                 "completed_at": datetime.now(UTC).isoformat(timespec="seconds"),

@@ -51,6 +51,8 @@ class Status(StrEnum):
     COMPLETED = "completed"
     ESCALATED = "escalated"
     FAILED = "failed"
+    #: A human closed an escalated workflow without proceeding (service/).
+    REJECTED = "rejected"
 
 
 class Route(StrEnum):

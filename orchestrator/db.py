@@ -15,14 +15,11 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
-
-SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
 def dsn_from_env() -> str:
@@ -44,8 +41,11 @@ class Store:
         self._binding: tuple[str, str, str] | None = None
 
     # --- lifecycle -----------------------------------------------------------
-    def apply_schema(self) -> None:
-        self.conn.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
+    def apply_schema(self) -> list[str]:
+        """Apply pending migrations (orchestrator/migrate.py); return those applied."""
+        from orchestrator.migrate import apply
+
+        return apply(self.conn)
 
     def close(self) -> None:
         self.conn.close()
@@ -207,7 +207,8 @@ class Store:
                 Json(provenance or {}),
             ),
         ).fetchone()
-        assert row is not None
+        if row is None:  # INSERT ... RETURNING always returns the row
+            raise RuntimeError("trace insert returned no id")
         return int(row["id"])
 
     def traces_for(self, workflow_id: str) -> list[dict[str, Any]]:
@@ -298,6 +299,7 @@ class Store:
             clauses.append("w.workflow_id LIKE %s")
             params.append(prefix.replace("%", r"\%").replace("_", r"\_") + "%")
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        # Only fixed clause strings are interpolated; every value is a parameter.
         query = f"""
             SELECT w.workflow_id, w.status, w.current_step, w.escalation_reason,
                    w.llm_calls, w.created_at, w.last_checkpoint_ts,
@@ -307,7 +309,7 @@ class Store:
               {where}
              ORDER BY w.created_at DESC, w.workflow_id
              LIMIT %s OFFSET %s
-        """
+        """  # noqa: S608
         return self.conn.execute(query, (*params, limit, offset)).fetchall()
 
     def label_for(self, workflow_id: str) -> dict[str, Any] | None:

@@ -1,0 +1,176 @@
+# VERITAS — production defaults. For a laptop cluster (kind/minikube), layer
+# values-laptop.yaml on top:  helm install veritas . -f values-laptop.yaml
+#
+# Postgres, Redis, ERPNext and the model servers are EXTERNAL: the chart takes
+# their addresses, it does not run them. Use a managed, highly available Postgres
+# with point-in-time recovery; the agent's state store is what makes resume safe.
+
+image:
+  repository: ghcr.io/adarsh16-30/veritas
+  # Defaults to the chart's appVersion. Prefer pinning `digest` in production.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Non-secret configuration, passed as environment variables (orchestrator/settings.py).
+config:
+  VERITAS_ENV: production
+  LOG_LEVEL: INFO
+  LOG_JSON: "true"
+  ERPNEXT_URL: ""            # e.g. https://erp.internal.example.com
+  ERPNEXT_PUBLIC_URL: ""     # what humans open; used for document links
+  VERITAS_COMPANY: ""
+  VERITAS_ABBR: ""
+  POSTGRES_HOST: ""
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: veritas
+  POSTGRES_USER: veritas
+  POSTGRES_SSLMODE: verify-full   # production refuses anything below `require`
+  POSTGRES_POOL_MAX: "4"
+  MODEL_BACKEND: openai
+  EXECUTOR_BASE_URL: ""
+  EXECUTOR_OPENAI_MODEL: ""
+  EXECUTOR_FAMILY: ""        # Rule 3: must differ from VERIFIER_FAMILY
+  VERIFIER_BASE_URL: ""
+  VERIFIER_OPENAI_MODEL: ""
+  VERIFIER_FAMILY: ""
+  MODEL_TIMEOUT_S: "180"
+  MODEL_MAX_CONCURRENCY: "2"
+  MODEL_RATE_LIMIT_PER_MIN: "0"
+  API_RATE_LIMIT_PER_MIN: "60"
+  LOCK_TTL_S: "60"
+  LOCK_RENEW_S: "20"
+  MAX_DEFERRALS: "5"
+  DEFER_BASE_S: "30"
+  BREAKER_FAILURES: "5"
+  BREAKER_COOLDOWN_S: "60"
+
+# Secrets come from a Kubernetes Secret you create (or one External Secrets
+# syncs), never from values. Expected keys:
+#   ERPNEXT_API_KEY, ERPNEXT_API_SECRET,               (finance identity, S4-S6)
+#   ERPNEXT_BUYER_API_KEY, ERPNEXT_BUYER_API_SECRET,   (buyer identity, S1-S3; required)
+#   POSTGRES_PASSWORD, REDIS_URL,
+#   EXECUTOR_API_KEY, VERIFIER_API_KEY                 (if the model endpoints need them)
+existingSecret: veritas-secrets
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+api:
+  replicas: 2
+  port: 8090
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 192Mi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+  service:
+    type: ClusterIP
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+worker:
+  replicas: 2
+  concurrency: 1
+  healthPort: 9109
+  # SIGTERM lets the workflow in hand reach its next checkpoint (docs/operations.md).
+  terminationGracePeriodSeconds: 150
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 256Mi}
+  autoscaling:
+    # CPU is a poor signal for a worker that waits on models. Scale on queue depth
+    # with KEDA (veritas_queue{queue="ready"}) when available; CPU is the fallback.
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled: true
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+topologySpread:
+  enabled: true
+  topologyKey: topology.kubernetes.io/zone
+
+migrations:
+  # Runs scripts/migrate.py before every install and upgrade (Helm hook).
+  enabled: true
+  backoffLimit: 2
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {memory: 128Mi}
+
+reconcile:
+  # Nightly ledger reconciliation against ERPNext: duplicate payments, overpayments,
+  # unbalanced vouchers. A failed Job (exit 2) is the alert.
+  enabled: true
+  schedule: "17 2 * * *"
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {memory: 160Mi}
+
+ingress:
+  enabled: false
+  className: nginx
+  host: veritas.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  tls:
+    secretName: veritas-tls
+
+networkPolicy:
+  enabled: true
+  # Namespace label of the ingress controller allowed to reach the API.
+  ingressControllerNamespace: ingress-nginx
+  # Namespace label of the Prometheus allowed to scrape both.
+  monitoringNamespace: monitoring
+  # Egress the workloads need. Tighten `to:` with the CIDRs or selectors of your
+  # Postgres, Redis, ERPNext and model endpoints; ports alone are the default.
+  egressPorts: [5432, 6379, 443, 8000, 8080, 11434]
+
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+    # API p95 latency over this is a warning.
+    apiP95Seconds: 1
+    # Workflows waiting for a worker longer than this many seconds (queue SLO).
+    delayedHigh: 100
+  grafanaDashboard:
+    # A ConfigMap the Grafana sidecar picks up (label grafana_dashboard: "1").
+    enabled: false

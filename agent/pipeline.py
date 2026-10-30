@@ -21,26 +21,39 @@ Enforced from day one:
 * Rule 7 — bounded retries and a per-workflow model-call budget covering *both*
   the executor and the verifier; on exhaustion the workflow escalates to a human.
   It never loops.
+
+An outage is not a step outcome. ``InfrastructureUnavailable`` (ERPNext or a
+model server down) propagates out of ``run_step`` with the step still
+checkpointed ``in_progress``, rather than being spent as a retry and turned into
+an escalation; the worker defers the workflow and resumes it later
+(orchestrator/queue.py). Under a worker, every write is preceded by
+``ensure_lease()``: a worker that has lost ownership writes nothing.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from agent.context import ContextAssembler
 from agent.executor import Decision, Executor, ExecutorError
-from agent.state import SIDE_EFFECTING, Action, Route, Status, StepContext, StepResult
-from erp.client import ERPClient, ERPError
+from agent.state import SIDE_EFFECTING, Action, Route, Status, Step, StepContext, StepResult
+from erp.client import DOCSTATUS_CANCELLED, DOCSTATUS_DRAFT, ERPClient, ERPError
 from erp.idempotent import submit_once
+from erp.resilience import InfrastructureUnavailable
 from orchestrator.budget import LlmBudget, WorkflowBudget
 from orchestrator.checkpoint import advance
 from orchestrator.db import Store
+from orchestrator.lease import ensure_lease
 from orchestrator.steps import writes_for
 from trace.logging import log_context
 from trace.store import TraceLogger
-from verify.gate import GateOutcome, VerificationGate
+from verify.gate import GateOutcome, VerificationGate, human_overridable
+
+#: ``(workflow_id, step) -> human_decisions.id`` of an unconsumed approval, or None.
+OverrideLookup = Callable[[str, Step], int | None]
 
 
 @dataclass(frozen=True)
@@ -86,6 +99,7 @@ class Pipeline:
         tracer: TraceLogger,
         policy: Policy | None = None,
         gate: VerificationGate | None = None,
+        override_for: OverrideLookup | None = None,
     ) -> None:
         self.db = db
         self.erp = erp
@@ -93,6 +107,9 @@ class Pipeline:
         self.executor = executor
         self.tracer = tracer
         self.gate = gate
+        # The service's escalation queue (service/). None everywhere else --
+        # the benchmark never consults a human, so its routes are unchanged.
+        self.override_for = override_for
         self.policy = policy or (Policy.verified() if gate is not None else Policy())
 
     @property
@@ -144,6 +161,8 @@ class Pipeline:
 
             try:
                 decision = self.executor.propose(ctx)
+            except InfrastructureUnavailable:
+                raise  # an outage, not an answer: the worker defers the workflow
             except ExecutorError as e:
                 # A malformed answer is a retryable fault; the reason is fed back
                 # into the next prompt rather than silently dropped.
@@ -171,6 +190,8 @@ class Pipeline:
             )
 
             outcome = self._gate(ctx, budget, attempts_remaining)
+            if outcome is not None and outcome.route is not Route.COMMIT:
+                self._apply_override(ctx, decision, outcome)
             route = outcome.route if outcome else _ROUTE_OF[decision.action]
             reason = (
                 outcome.reason
@@ -195,6 +216,11 @@ class Pipeline:
 
             try:
                 names = self._commit(ctx)
+            except InfrastructureUnavailable:
+                # The write may or may not have reached ERPNext. Either way the
+                # idempotency key settles it on resume (_adopt_orphan); spending a
+                # retry here would only fail the same way against a down server.
+                raise
             except ERPError as e:
                 self._record(
                     ctx, attempt, decision.action.value, trace_id, outcome, decision, False
@@ -228,6 +254,27 @@ class Pipeline:
             started,
             self.policy.max_attempts_per_step,
         )
+
+    def _apply_override(self, ctx: StepContext, decision: Decision, outcome: GateOutcome) -> None:
+        """Lift the gate's veto when a human approved this step, and only then.
+
+        Every condition must hold: the executor itself proposed ``proceed``
+        (Rule 2 -- a human may overrule the verifier, not stand in for the
+        agent), the hard rules passed, the objection is one a human may overrule
+        (``human_overridable``), and an approval recorded for exactly this step
+        has not already been spent on a commit. The gate still ran in full, so
+        the trace shows what was overruled and by which decision.
+        """
+        if self.override_for is None or decision.action is not Action.PROCEED:
+            return
+        if not outcome.rule_report.ok or not human_overridable(outcome.reason):
+            return
+        decision_id = self.override_for(ctx.workflow_id, ctx.step)
+        if decision_id is None:
+            return
+        outcome.override_decision = decision_id
+        outcome.reason = f"human_override: decision {decision_id} over {outcome.reason}"
+        outcome.route = Route.COMMIT
 
     # --- the verification gate (absent in the baseline configuration) ------------
     def _gate(
@@ -308,12 +355,14 @@ class Pipeline:
                     names.append(existing)
                     continue
 
+                ensure_lease()  # B4: never write after losing ownership
                 with self.db.commit_binding(ctx.workflow_id, ctx.step, plan.doctype):
                     name = submit_once(self.erp, plan.doctype, plan.build(), plan.key, self.db)
                 ctx.docs[plan.doc_slot] = name
                 names.append(name)
             return names
 
+        ensure_lease()
         if ctx.step in SIDE_EFFECTING:
             # `advance` is PRD §9.2 provided verbatim and therefore unannotated.
             # It is not modified to satisfy a type checker; the ignore is here,
@@ -341,13 +390,30 @@ class Pipeline:
         document. The key is stamped into the document itself, so the ledger can
         be asked directly. Found here, the existing document is adopted rather
         than duplicated (Rules 5–6).
+
+        ``insert_and_submit`` is two requests, so the orphan can also be a
+        *draft*: inserted, never submitted. A draft moves no ledger entry, so
+        recording it as committed would let the workflow proceed on a posting
+        that never happened. It is submitted first, then recorded. A cancelled
+        document carrying the key is neither adopted nor re-posted: someone
+        reversed it, and that is a human's call to revisit, not the agent's.
         """
         if self.db.get_committed(key) is not None:
             return
-        orphan = self.erp.find_by_idempotency_key(doctype, key)
-        if orphan:
-            with self.db.commit_binding(ctx.workflow_id, ctx.step, doctype):
-                self.db.record_committed(key, orphan)
+        found = self.erp.find_by_idempotency_key_with_status(doctype, key)
+        if found is None:
+            return
+        name, docstatus = found
+        if docstatus == DOCSTATUS_CANCELLED:
+            raise ERPError(
+                f"{doctype} {name} carries this step's idempotency key but is cancelled; "
+                "refusing to adopt or re-post it"
+            )
+        if docstatus == DOCSTATUS_DRAFT:
+            ensure_lease()
+            self.erp.submit(self.erp.get(doctype, name))
+        with self.db.commit_binding(ctx.workflow_id, ctx.step, doctype):
+            self.db.record_committed(key, name)
 
     def _escalate(self, ctx: StepContext, reason: str, started: float, attempts: int) -> StepResult:
         self.db.checkpoint(ctx.workflow_id, ctx.step, Status.ESCALATED.value)

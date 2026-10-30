@@ -26,7 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dotenv import load_dotenv  # noqa: E402
 
 from agent.context import WorkflowSpec  # noqa: E402
-from agent.executor import Executor, OllamaLLM  # noqa: E402
+from agent.executor import Executor  # noqa: E402
+from agent.llm import family_of, make_llm  # noqa: E402
 from erp.scoped import agent_client, describe  # noqa: E402
 from orchestrator.db import Store  # noqa: E402
 from orchestrator.machine import WorkflowMachine  # noqa: E402
@@ -74,8 +75,18 @@ def main() -> int:
         return 1
 
     spec = build_spec(args)
-    llm = OllamaLLM()
-    gate = build_gate(erp, spec, executor_model=llm.name) if args.verified else None
+    llm = make_llm("executor")
+    gate = (
+        build_gate(
+            erp,
+            spec,
+            executor_model=llm.name,
+            verifier_llm=make_llm("verifier", executor_model=llm.name),
+            executor_family=family_of(llm),
+        )
+        if args.verified
+        else None
+    )
     config = "verified" if gate else "baseline"
     print(f"config: {config}   executor model: {llm.name}   erp: {erp.url} ({describe(erp)})")
     if gate:

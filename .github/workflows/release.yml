@@ -1,0 +1,139 @@
+name: release
+
+# Builds, scans and (on main and version tags) publishes the service image, and
+# validates the Helm chart. Nothing deploys automatically: a release is an image
+# digest plus a chart, applied by a person or a GitOps controller.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - uv.lock
+      - deploy/**
+      - .github/workflows/release.yml
+
+permissions:
+  contents: read
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: helm lint (production and laptop values)
+        run: |
+          helm lint deploy/helm/veritas
+          helm lint deploy/helm/veritas -f deploy/helm/veritas/values-laptop.yaml
+
+      - name: render and validate against the Kubernetes schemas
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xz kubeconform
+          for values in values.yaml values-laptop.yaml; do
+            helm template veritas deploy/helm/veritas -f "deploy/helm/veritas/$values" \
+              --set ingress.enabled=true \
+              --set monitoring.serviceMonitor.enabled=true \
+              --set monitoring.prometheusRule.enabled=true \
+              --set monitoring.grafanaDashboard.enabled=true \
+              | ./kubeconform -strict -summary -kubernetes-version 1.30.0 \
+                  -schema-location default \
+                  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          done
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Registry names must be lowercase; the repository owner is not.
+      - name: image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/veritas" >> "$GITHUB_ENV"
+
+      - name: lint the Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # DL3006: `FROM ${PYTHON_IMAGE}` hides the tag from hadolint; the ARG's
+          # default pins it exactly (python:3.11.13-slim-bookworm).
+          # DL3008/DL3013: the base image is pinned; pip installs a pinned uv.
+          ignore: DL3006,DL3008,DL3013
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: build (load locally for scanning)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: veritas:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: scan (fail on high or critical)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: veritas:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: smoke-test the image as it will run
+        run: |
+          docker run --rm --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges veritas:scan \
+            python -c "import service.api, service.worker, bench.reconcile_ledger; print('imports ok')"
+          test "$(docker run --rm veritas:scan id -u)" = "10001"
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: publish with SBOM and provenance
+        if: github.event_name != 'pull_request'
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+
+      - name: attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from agent.context import ContextAssembler, WorkflowSpec
 from agent.executor import Executor
-from agent.pipeline import Pipeline, Policy
+from agent.pipeline import OverrideLookup, Pipeline, Policy
 from agent.state import Route, Status, Step, StepContext, StepResult
 from erp.client import ERPClient
 from orchestrator.db import Store
@@ -58,6 +58,7 @@ class WorkflowMachine:
         executor: Executor,
         policy: Policy | None = None,
         gate: VerificationGate | None = None,
+        override_for: OverrideLookup | None = None,
     ) -> None:
         self.db = db
         self.erp = erp
@@ -73,6 +74,7 @@ class WorkflowMachine:
             tracer=TraceLogger(db),
             policy=policy,
             gate=gate,
+            override_for=override_for,
         )
 
     @property

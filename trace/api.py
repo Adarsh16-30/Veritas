@@ -5,7 +5,7 @@
 Read-only by construction, not by convention. Each request opens its own
 Postgres session and sets it ``READ ONLY`` before the first query, so a bug
 here cannot write to agent state even by accident; ``traces`` additionally
-refuses UPDATE and DELETE at the database level (``orchestrator/schema.sql``).
+refuses UPDATE and DELETE at the database level (``orchestrator/migrations/0001_baseline.sql``).
 
 The SPA in ``ui/`` is served from ``/`` by the same process, so the explorer is
 one command and one port.

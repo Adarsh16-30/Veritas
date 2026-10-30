@@ -18,10 +18,12 @@ pass()  { printf '  %s  %s\n' "$(green PASS)" "$1"; }
 skip()  { printf '  %s  %s\n' "SKIP" "$1"; }
 bad()   { printf '  %s  %s\n' "$(red FAIL)" "$1"; fail=1; }
 
-# All tracked python files outside tests/ . Falls back to find when not a git repo.
+# All python files outside tests/, tracked or new: a check that only sees
+# `git ls-files` passes a violation until the file is committed. Falls back to
+# find when not a git repo.
 non_test_py() {
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git ls-files '*.py'
+    git ls-files --cached --others --exclude-standard '*.py'
   else
     find . -name '*.py' -not -path './.venv/*' -not -path './.git/*'
   fi | grep -v -E '^(\./)?tests/' || true
@@ -42,7 +44,15 @@ grep_non_test() { non_test_py | tr '\n' '\0' | xargs -0 -r grep -nE "$1" 2>/dev/
 echo "== VERITAS rule check =="
 
 # RULE 1 — no mocked ERP / fake persistence outside tests/.
-h=$(grep_non_test 'BaseHTTPRequestHandler|HTTPServer\(|responses\.activate|requests_mock|httpretty|class +(Fake|Mock|Stub)ERP')
+# One named exemption: service/worker.py serves its own /healthz and /metrics on
+# a side port (service/worker.py: serve_health). It answers no ERPNext route.
+# Anything else that starts an HTTP server outside tests/ still fails.
+h=$(grep_non_test 'BaseHTTPRequestHandler|HTTPServer\(|responses\.activate|requests_mock|httpretty|class +(Fake|Mock|Stub)ERP' \
+    | grep -v '^service/worker\.py:' || true)
+if grep -qE '/api/(resource|method)' service/worker.py 2>/dev/null; then
+  h="$h
+service/worker.py serves an ERPNext-shaped route"
+fi
 if [ -n "$h" ]; then bad "RULE 1 possible mocked ERP outside tests/:"; echo "$h" | sed 's/^/      /'
 else pass "RULE 1 no mocked ERP in non-test code"; fi
 
@@ -130,6 +140,13 @@ if [ -f erp/idempotent.py ]; then
   fi
 else skip "RULE 5 erp/idempotent.py not present yet (pre-Phase 2)"; fi
 
+# RULE 5 — a write is never resent at the HTTP layer; only the key may decide.
+if [ -f scripts/check_write_retry.py ]; then
+  if out=$(python scripts/check_write_retry.py 2>&1); then
+    pass "RULE 5 ERPNext writes are sent once (no HTTP-level retry)"
+  else bad "RULE 5 an ERPNext write can be retried blind:"; echo "$out" | sed 's/^/      /'; fi
+else skip "RULE 5 write-retry check not present"; fi
+
 # RULE 6 — checkpoint before side effect.
 if [ -f orchestrator/checkpoint.py ]; then
   if grep -q 'def advance' orchestrator/checkpoint.py && grep -q 'checkpoint(' orchestrator/checkpoint.py; then
@@ -171,6 +188,19 @@ if [ -f agent/pipeline.py ]; then
     else bad "RULE 7 verify/gate.py calls a model without reserving budget"; fi
   fi
 else skip "RULE 7 agent/pipeline.py not present yet (pre-Phase 2)"; fi
+
+# RULE 2/7 — a human approval lifts only the verifier's veto. Hard invariants,
+# the agent's own refusal and a spent budget are never approvable. Static, so it
+# needs no dependencies; tests/integration/service_api_synthetic_test.py and the
+# pipeline's override tests pin the behaviour.
+if [ -f verify/gate.py ] && grep -q 'HUMAN_OVERRIDABLE_PREFIXES' verify/gate.py; then
+  block=$(awk '/^HUMAN_OVERRIDABLE_PREFIXES/,/^\)/' verify/gate.py)
+  h=$(echo "$block" | grep -nE 'hard_rule|floor|executor_chose|budget|retry_cap' || true)
+  guard=$(grep -c 'rule_report.ok' agent/pipeline.py || true)
+  if [ -n "$h" ]; then bad "RULE 2/7 an overridable prefix lifts what it must not:"; echo "$h" | sed 's/^/      /'
+  elif [ "${guard:-0}" -lt 1 ]; then bad "RULE 2/7 the pipeline override no longer checks the hard rules"
+  else pass "RULE 2/7 hard rules, agent refusals and spent budgets are never approvable"; fi
+else skip "RULE 2/7 no human override present"; fi
 
 # PRD Phase 6 — least privilege: "S1–S3 hold no payment scope". Not one of the
 # ten rules, but a guarantee the same way: the local write/call scope must give

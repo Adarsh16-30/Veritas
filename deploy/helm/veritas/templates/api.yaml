@@ -1,0 +1,129 @@
+{{- $c := dict "root" . "component" "api" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "veritas.fullname" . }}-api
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "veritas.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "veritas.selector" $c | nindent 8 }}
+    spec:
+      {{- include "veritas.podSecurity" . | nindent 6 }}
+      {{- include "veritas.spread" $c | nindent 6 }}
+      containers:
+        - name: api
+          image: {{ include "veritas.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - uvicorn
+            - --factory
+            - service.api:create_app_from_settings
+            - --host
+            - 0.0.0.0
+            - --port
+            - {{ .Values.api.port | quote }}
+            - --workers
+            - "1"
+            - --limit-max-requests
+            - "10000"
+            - --no-access-log
+            - --proxy-headers
+          {{- include "veritas.env" (dict "root" .) | nindent 10 }}
+          ports:
+            - {name: http, containerPort: {{ .Values.api.port }}}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- include "veritas.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- include "veritas.tmp" . | nindent 8 }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "veritas.fullname" . }}-api
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    {{- include "veritas.selector" $c | nindent 4 }}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+{{- if .Values.api.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "veritas.fullname" . }}-api
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "veritas.fullname" . }}-api
+  minReplicas: {{ .Values.api.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.api.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- if .Values.api.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "veritas.fullname" . }}-api
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.api.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "veritas.selector" $c | nindent 6 }}
+{{- end }}

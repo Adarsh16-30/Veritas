@@ -40,11 +40,18 @@ class InfrastructureUnavailable(RuntimeError):
     Never a judgement about the workflow. Subclassed by ``ERPUnavailable`` and
     ``ModelUnavailable`` so existing ``except ERPError`` / ``except
     ExecutorError`` clauses still see them.
+
+    ``retryable=False`` marks an outage that an immediate retry would only
+    repeat (a model server that timed out after minutes of work): ``retry_call``
+    gives up on it at once and leaves the waiting to the worker's deferral.
     """
 
-    def __init__(self, message: str, retry_after: float | None = None) -> None:
+    def __init__(
+        self, message: str, retry_after: float | None = None, retryable: bool = True
+    ) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+        self.retryable = retryable
 
 
 def backoff_delay(attempt: int, base: float, cap: float, rng: random.Random | None = None) -> float:
@@ -62,12 +69,12 @@ def retry_call(
     sleep: Callable[[float], None] = time.sleep,
     rng: random.Random | None = None,
 ) -> T:
-    """Run ``fn``, retrying only ``InfrastructureUnavailable``, at most ``attempts`` times."""
+    """Run ``fn``, retrying retryable ``InfrastructureUnavailable`` up to ``attempts`` times."""
     for attempt in range(attempts):
         try:
             return fn()
         except InfrastructureUnavailable as e:
-            if attempt == attempts - 1:
+            if attempt == attempts - 1 or not e.retryable:
                 raise
             delay = backoff_delay(attempt, base_delay, max_delay, rng)
             if e.retry_after is not None:

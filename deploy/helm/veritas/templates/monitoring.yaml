@@ -1,0 +1,108 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "veritas.fullname" . }}
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "veritas.fullname" . }}
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: veritas.page
+      rules:
+        - alert: VeritasLedgerReconciliationFailed
+          # Duplicate payment, overpayment or unbalanced voucher in the real GL.
+          expr: kube_job_status_failed{job_name=~"{{ include "veritas.fullname" . }}-reconcile-.*"} > 0
+          labels: {severity: page}
+          annotations:
+            summary: The nightly ledger reconciliation failed. Stop the workers and read the Job log.
+        - alert: VeritasCircuitOpen
+          expr: max by (name) (veritas_breaker_open) > 0
+          for: 5m
+          labels: {severity: page}
+          annotations:
+            summary: "{{ "{{" }} $labels.name {{ "}}" }} has been failing for 5 minutes; workflows are deferring."
+        - alert: VeritasWorkersAbsent
+          expr: absent(veritas_queue{queue="ready"})
+          for: 10m
+          labels: {severity: page}
+          annotations:
+            summary: No worker is reporting. Nothing is being processed.
+    - name: veritas.warn
+      rules:
+        - alert: VeritasWorkflowsHandedToHumansForOutage
+          expr: increase(veritas_worker_workflows{outcome="gave_up"}[1h]) > 0
+          labels: {severity: warning}
+          annotations:
+            summary: Workflows outlasted their deferrals and are waiting in the escalation queue.
+        - alert: VeritasWorkerErrors
+          expr: increase(veritas_worker_workflows{outcome="failed"}[1h]) > 0
+          labels: {severity: warning}
+          annotations:
+            summary: A workflow raised an unexpected error (worker_error) and went to a human.
+        - alert: VeritasLeaseLost
+          expr: increase(veritas_worker_workflows{outcome="leases_lost"}[1h]) > 0
+          labels: {severity: warning}
+          annotations:
+            summary: A worker lost a workflow lease mid-run (Redis trouble or a stalled worker).
+        - alert: VeritasBacklog
+          expr: sum(veritas_queue{queue=~"ready|delayed"}) > {{ .Values.monitoring.prometheusRule.delayedHigh }}
+          for: 15m
+          labels: {severity: warning}
+          annotations:
+            summary: The work queue is growing faster than workers drain it.
+        - alert: VeritasApiErrors
+          expr: |
+            sum(rate(veritas_api_requests_total{status=~"5.."}[5m]))
+              / clamp_min(sum(rate(veritas_api_requests_total[5m])), 1e-9) > 0.02
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: Over 2% of API requests are failing.
+        - alert: VeritasApiSlow
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(veritas_api_request_seconds_bucket[5m])))
+              > {{ .Values.monitoring.prometheusRule.apiP95Seconds }}
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: API p95 latency is over target.
+{{- end }}
+{{- if .Values.monitoring.grafanaDashboard.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "veritas.fullname" . }}-dashboard
+  labels:
+    {{- include "veritas.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  veritas.json: |-
+    {{- .Files.Get "files/veritas-dashboard.json" | nindent 4 }}
+{{- end }}

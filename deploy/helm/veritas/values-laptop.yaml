@@ -1,0 +1,49 @@
+# kind / minikube on the development laptop: one of everything, small, no
+# autoscaling, no disruption budgets. The models stay in Ollama on the host.
+#
+#   kind load docker-image veritas:dev
+#   kubectl create secret generic veritas-secrets --from-env-file=.env
+#   helm install veritas deploy/helm/veritas -f deploy/helm/veritas/values-laptop.yaml
+
+image:
+  repository: veritas
+  tag: dev
+  pullPolicy: Never
+
+config:
+  VERITAS_ENV: dev
+  POSTGRES_SSLMODE: prefer
+  MODEL_BACKEND: ollama
+  # The host, as seen from a kind/minikube pod. minikube: host.minikube.internal.
+  OLLAMA_URL: http://host.docker.internal:11434
+  ERPNEXT_URL: http://host.docker.internal:8080
+  ERPNEXT_PUBLIC_URL: http://localhost:8080
+  POSTGRES_HOST: host.docker.internal
+  POSTGRES_PORT: "5433"
+  # Overrides the .env value (localhost means the pod itself in here).
+  REDIS_URL: redis://host.docker.internal:6380/0
+
+api:
+  replicas: 1
+  autoscaling: {enabled: false}
+  pdb: {enabled: false}
+  resources:
+    requests: {cpu: 25m, memory: 96Mi}
+    limits: {memory: 160Mi}
+
+worker:
+  replicas: 1
+  autoscaling: {enabled: false}
+  pdb: {enabled: false}
+  resources:
+    requests: {cpu: 25m, memory: 96Mi}
+    limits: {memory: 220Mi}
+
+topologySpread:
+  enabled: false
+
+reconcile:
+  enabled: false
+
+networkPolicy:
+  enabled: false
