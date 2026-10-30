@@ -102,6 +102,14 @@ class ServiceStore:
             )
         return token
 
+    def disable_client(self, client_id: str) -> bool:
+        """Revoke a key. The row stays: decisions and requests still name it."""
+        with self.pool.connection() as conn:
+            cur = conn.execute(
+                "UPDATE api_clients SET disabled = TRUE WHERE client_id = %s", (client_id,)
+            )
+            return cur.rowcount == 1
+
     def client(self, client_id: str) -> dict[str, Any] | None:
         with self.pool.connection() as conn:
             row: dict[str, Any] | None = conn.execute(
@@ -244,7 +252,8 @@ class ServiceStore:
                     wf["escalation_reason"] or "",
                 ),
             ).fetchone()
-            assert row is not None
+            if row is None:  # INSERT ... RETURNING always returns the row
+                raise RuntimeError("decision insert returned no id")
             new_status = Status.REJECTED.value if decision == "reject" else Status.IN_PROGRESS.value
             conn.execute(
                 "UPDATE workflows SET status = %s WHERE workflow_id = %s",

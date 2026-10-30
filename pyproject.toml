@@ -41,14 +41,25 @@ target-version = "py311"
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+# S311: `random` here only ever seeds reproducible benchmarks and backoff jitter;
+# nothing cryptographic uses it (API keys come from `secrets`, service/auth.py).
+ignore = ["S311"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S"]
+# `git rev-parse HEAD` for result provenance (Rule 10): a fixed argv, no shell.
+"bench/run.py" = ["S603", "S607"]
+"verify/conformal.py" = ["S603", "S607"]
+"scripts/check_provenance.py" = ["S603", "S607"]
+"scripts/independence_report.py" = ["S603", "S607"]
 # PRD §9.1 is reproduced byte-for-byte, combined `import hashlib, json` and all.
 # Silencing the rules is correct here; rewriting provided code to please a linter
 # is not.
 "erp/idempotent.py" = ["I001", "E401"]
+# PRD §9.4's assert, likewise verbatim. It is a backup: assert_no_rationale_leak
+# raises explicitly, and load_settings refuses to run under `python -O`.
+"verify/verifier.py" = ["S101"]
 
 # `trace/` is mandated by PRD §11 and shadows the stdlib `trace` module. It
 # resolves correctly (repo root precedes the stdlib on sys.path) but isort would

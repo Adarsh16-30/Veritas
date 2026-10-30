@@ -207,7 +207,8 @@ class Store:
                 Json(provenance or {}),
             ),
         ).fetchone()
-        assert row is not None
+        if row is None:  # INSERT ... RETURNING always returns the row
+            raise RuntimeError("trace insert returned no id")
         return int(row["id"])
 
     def traces_for(self, workflow_id: str) -> list[dict[str, Any]]:
@@ -298,6 +299,7 @@ class Store:
             clauses.append("w.workflow_id LIKE %s")
             params.append(prefix.replace("%", r"\%").replace("_", r"\_") + "%")
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        # Only fixed clause strings are interpolated; every value is a parameter.
         query = f"""
             SELECT w.workflow_id, w.status, w.current_step, w.escalation_reason,
                    w.llm_calls, w.created_at, w.last_checkpoint_ts,
@@ -307,7 +309,7 @@ class Store:
               {where}
              ORDER BY w.created_at DESC, w.workflow_id
              LIMIT %s OFFSET %s
-        """
+        """  # noqa: S608
         return self.conn.execute(query, (*params, limit, offset)).fetchall()
 
     def label_for(self, workflow_id: str) -> dict[str, Any] | None:

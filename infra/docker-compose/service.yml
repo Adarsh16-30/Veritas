@@ -1,0 +1,81 @@
+# VERITAS service on the laptop: API + worker + one-shot migrator, joined to the
+# local stack (stack.yml) as one compose project.
+#
+#   docker build -t veritas:dev .
+#   docker compose -f infra/docker-compose/stack.yml -f infra/docker-compose/service.yml up -d
+#   docker compose -f infra/docker-compose/stack.yml -f infra/docker-compose/service.yml \
+#       run --rm veritas-migrate python scripts/create_api_client.py --id intake --name Intake --roles submitter
+#
+# API     -> http://localhost:8090   (healthz, readyz, /v1/...)
+# Worker  -> http://localhost:9109   (healthz, metrics)
+#
+# Memory: hard limits that fit beside two ~5 GB models (docs/operations.md). The
+# measured figures are 88-93 MB for the API and 64 MB for the worker; the limits
+# leave headroom for a real workflow's prompts and ERP reads. Models stay on the
+# host (Ollama), outside these limits. Never `down -v`: it wipes the ledger.
+
+name: veritas
+
+x-veritas: &veritas
+  image: ${VERITAS_IMAGE:-veritas:dev}
+  env_file: ../../.env
+  environment: &veritas-env
+    POSTGRES_HOST: agent-postgres
+    POSTGRES_PORT: "5432"
+    REDIS_URL: redis://agent-redis:6379/0
+    ERPNEXT_URL: http://erpnext-frontend:8080
+    ERPNEXT_PUBLIC_URL: http://localhost:8080
+    OLLAMA_URL: ${OLLAMA_URL_FROM_CONTAINER:-http://host.docker.internal:11434}
+    LOG_JSON: "true"
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  depends_on:
+    agent-postgres:
+      condition: service_healthy
+    agent-redis:
+      condition: service_started
+
+services:
+  veritas-migrate:
+    <<: *veritas
+    command: ["python", "scripts/migrate.py"]
+    mem_limit: 128m
+    restart: "no"
+
+  veritas-api:
+    <<: *veritas
+    depends_on:
+      veritas-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8090:8090"
+    mem_limit: 160m
+    restart: unless-stopped
+
+  veritas-worker:
+    <<: *veritas
+    command: ["python", "-m", "service.worker"]
+    environment:
+      <<: *veritas-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+    depends_on:
+      veritas-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "9109:9109"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9109/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    # A workflow in hand finishes or reaches its next checkpoint after SIGTERM.
+    stop_grace_period: 2m
+    mem_limit: 220m
+    restart: unless-stopped

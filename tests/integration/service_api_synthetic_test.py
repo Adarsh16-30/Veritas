@@ -148,6 +148,12 @@ def test_requests_without_a_valid_key_are_refused(env: Env, header: str) -> None
     assert r.status_code == 401 and r.headers["WWW-Authenticate"] == "Bearer"
 
 
+def test_a_disabled_key_is_refused(env: Env) -> None:
+    assert env.client.get("/v1/escalations", headers=env.as_("alice")).status_code == 200
+    env.store.disable_client("alice")
+    assert env.client.get("/v1/escalations", headers=env.as_("alice")).status_code == 401
+
+
 def test_roles_are_enforced(env: Env) -> None:
     assert env.submit(who="viewer").status_code == 403
     assert env.client.get("/v1/escalations", headers=env.as_("intake")).status_code == 403
@@ -397,3 +403,28 @@ def test_a_request_becomes_the_spec_the_agent_runs() -> None:
     assert spec.workflow_id == "req-1" and spec.qty == 10.0 and spec.received_qty == 9
     assert spec.tolerance_pct == 1.5 and spec.invoice_rate is None
     assert str(spec.expected_total) == "1255.00"
+
+
+def test_the_worker_takes_erp_credentials_from_settings(tmp_path: Any) -> None:
+    """A key mounted as a file reaches the ERP client; a buyer key scopes it."""
+    from erp.scoped import StepScopedERP
+    from service.worker import erp_from_settings
+
+    key = tmp_path / "key"
+    key.write_text("fin-key\n", encoding="utf-8")
+    import os
+
+    os.environ["ERPNEXT_API_KEY_FILE"] = str(key)
+    try:
+        plain = erp_from_settings(load_settings(erpnext_api_secret="fin-secret"))
+        assert plain.s.headers["Authorization"] == "token fin-key:fin-secret"
+        scoped = erp_from_settings(
+            load_settings(
+                erpnext_api_secret="fin-secret",
+                erpnext_buyer_api_key="buy-key",
+                erpnext_buyer_api_secret="buy-secret",
+            )
+        )
+        assert isinstance(scoped, StepScopedERP)
+    finally:
+        del os.environ["ERPNEXT_API_KEY_FILE"]

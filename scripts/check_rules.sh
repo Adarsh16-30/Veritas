@@ -18,10 +18,12 @@ pass()  { printf '  %s  %s\n' "$(green PASS)" "$1"; }
 skip()  { printf '  %s  %s\n' "SKIP" "$1"; }
 bad()   { printf '  %s  %s\n' "$(red FAIL)" "$1"; fail=1; }
 
-# All tracked python files outside tests/ . Falls back to find when not a git repo.
+# All python files outside tests/, tracked or new: a check that only sees
+# `git ls-files` passes a violation until the file is committed. Falls back to
+# find when not a git repo.
 non_test_py() {
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git ls-files '*.py'
+    git ls-files --cached --others --exclude-standard '*.py'
   else
     find . -name '*.py' -not -path './.venv/*' -not -path './.git/*'
   fi | grep -v -E '^(\./)?tests/' || true
@@ -42,7 +44,15 @@ grep_non_test() { non_test_py | tr '\n' '\0' | xargs -0 -r grep -nE "$1" 2>/dev/
 echo "== VERITAS rule check =="
 
 # RULE 1 — no mocked ERP / fake persistence outside tests/.
-h=$(grep_non_test 'BaseHTTPRequestHandler|HTTPServer\(|responses\.activate|requests_mock|httpretty|class +(Fake|Mock|Stub)ERP')
+# One named exemption: service/worker.py serves its own /healthz and /metrics on
+# a side port (service/worker.py: serve_health). It answers no ERPNext route.
+# Anything else that starts an HTTP server outside tests/ still fails.
+h=$(grep_non_test 'BaseHTTPRequestHandler|HTTPServer\(|responses\.activate|requests_mock|httpretty|class +(Fake|Mock|Stub)ERP' \
+    | grep -v '^service/worker\.py:' || true)
+if grep -qE '/api/(resource|method)' service/worker.py 2>/dev/null; then
+  h="$h
+service/worker.py serves an ERPNext-shaped route"
+fi
 if [ -n "$h" ]; then bad "RULE 1 possible mocked ERP outside tests/:"; echo "$h" | sed 's/^/      /'
 else pass "RULE 1 no mocked ERP in non-test code"; fi
 

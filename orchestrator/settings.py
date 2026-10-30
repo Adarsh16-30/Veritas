@@ -21,6 +21,7 @@ environment directly; the service builds its clients from this object.
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -179,6 +180,10 @@ class Settings(BaseSettings):
 
 def load_settings(**overrides: Any) -> Settings:
     """Read and validate; in production, refuse an unsafe configuration."""
+    if sys.flags.optimize:
+        # `python -O` strips every assert, including PRD §9.4's guard that the
+        # verifier never sees the executor's rationale (Rule 3).
+        raise SettingsError("refusing to run under python -O: it strips PRD §9 guards")
     try:
         settings = Settings(**overrides)
     except ValueError as e:

@@ -19,6 +19,7 @@ from dotenv import load_dotenv  # noqa: E402
 
 from orchestrator.db import Store  # noqa: E402
 from orchestrator.migrate import MigrationError, discover  # noqa: E402
+from orchestrator.settings import load_settings  # noqa: E402
 
 
 def main() -> int:
@@ -26,7 +27,8 @@ def main() -> int:
     p.add_argument("--status", action="store_true", help="show state; apply nothing")
     args = p.parse_args()
     load_dotenv()
-    with Store() as store:
+    # From validated settings: honours POSTGRES_PASSWORD_FILE and POSTGRES_SSLMODE.
+    with Store(load_settings().postgres_dsn()) as store:
         if args.status:
             exists = store.conn.execute(
                 "SELECT to_regclass('schema_migrations') IS NOT NULL AS e"

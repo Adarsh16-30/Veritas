@@ -48,9 +48,9 @@ from agent.executor import Executor, ModelUnavailable
 from agent.llm import family_of, make_llm
 from agent.pipeline import Policy
 from agent.state import Status, Step
-from erp.client import ERPUnavailable
+from erp.client import ERPClient, ERPUnavailable
 from erp.resilience import CircuitBreaker, InfrastructureUnavailable
-from erp.scoped import agent_client, describe
+from erp.scoped import StepScopedERP, describe
 from orchestrator.db import Store
 from orchestrator.machine import WorkflowMachine
 from orchestrator.queue import DEAD_KEY, Worker, WorkQueue
@@ -60,6 +60,23 @@ from trace.logging import log_context, setup_logging
 from verify.gate import build_gate
 
 _log = logging.getLogger("veritas.worker")
+
+
+def erp_from_settings(settings: Settings) -> ERPClient:
+    """The agent's ERP client, from validated settings rather than raw env.
+
+    So credentials mounted as files (``ERPNEXT_API_KEY_FILE``) reach the worker
+    too. Step-scoped whenever a buyer key is configured, as ``agent_client``.
+    """
+
+    def value(secret: Any) -> str | None:
+        return secret.get_secret_value() if secret is not None else None
+
+    finance = (value(settings.erpnext_api_key), value(settings.erpnext_api_secret))
+    buyer = (value(settings.erpnext_buyer_api_key), value(settings.erpnext_buyer_api_secret))
+    if buyer[0] and buyer[1] and finance[0] and finance[1]:
+        return StepScopedERP(buyer[0], buyer[1], finance[0], finance[1], url=settings.erpnext_url)
+    return ERPClient(url=settings.erpnext_url, api_key=finance[0], api_secret=finance[1])
 
 
 def spec_from_request(workflow_id: str, request: dict[str, Any]) -> WorkflowSpec:
@@ -85,7 +102,7 @@ class WorkflowRunner:
         self.settings = settings
         self.breakers = breakers
         self.store = Store(settings.postgres_dsn())
-        self.erp = agent_client()
+        self.erp = erp_from_settings(settings)
         self.executor_llm = make_llm("executor")
         self._verifier_llm: Any = None
 
@@ -181,12 +198,10 @@ class WorkerMetrics(Collector):
 
     def collect(self) -> Any:
         g = GaugeMetricFamily("veritas_queue", "Work queue sizes.", labels=["queue"])
-        try:
+        with contextlib.suppress(Exception):  # a scrape must not fail on Redis
             g.add_metric(["ready"], self.queue.depth())
             g.add_metric(["delayed"], self.queue.delayed())
             g.add_metric(["dead"], int(self.queue.r.hlen(DEAD_KEY)))
-        except Exception:  # noqa: BLE001 - a scrape must not fail on Redis
-            pass
         yield g
         c = GaugeMetricFamily(
             "veritas_worker_workflows", "Workflows by outcome.", labels=["outcome"]
@@ -263,7 +278,7 @@ def main() -> int:
     load_dotenv()
     settings = load_settings()
     setup_logging(settings.log_level, settings.log_json)
-    access = describe(agent_client())
+    access = describe(erp_from_settings(settings))
     if settings.veritas_env == "production" and not access.startswith("step-scoped"):
         _log.error("refusing to start: production requires step-scoped ERP access")
         return 2

@@ -29,7 +29,10 @@ from dotenv import load_dotenv  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="0.0.0.0")
+    # All interfaces by default: the Prometheus container reaches the host through
+    # host.docker.internal, which a loopback-only bind would refuse on Linux. The
+    # exporter serves aggregate counts only; on a shared host, pass --host 127.0.0.1.
+    parser.add_argument("--host", default="0.0.0.0")  # noqa: S104
     parser.add_argument("--port", type=int, default=9108)
     parser.add_argument("--results-dir", default="results")
     args = parser.parse_args()
