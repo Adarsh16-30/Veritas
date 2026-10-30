@@ -628,3 +628,22 @@ rather than being engineered around.
 - **The demo is n = 1 per class.** `bench/demo.py` says so in its output and
   writes only to `results/demo/`. It is a walkthrough, not evidence.
 
+
+### Result provenance after history rewrites (Rule 10)
+
+- **Most recorded commits no longer exist in the published history.** Results
+  files record the commit they ran on, and `docs/results.md` cites it. The
+  history was later rewritten three times: the early history was squashed, a
+  local-only notes file's references were scrubbed, and a duplicated merge was
+  linearized. That left the recorded ids (b4, the pre-gap-fix runs, and
+  b5/c5/v5/l1/demo) pointing at commits nobody can check out. The numbers are
+  unchanged; only the link from a number to its code was broken.
+- **What was done.** `docs/provenance.md` maps each recorded commit to the
+  published commit holding the same code. `scripts/check_provenance.py`, run by
+  `check_rules.sh` and CI, fails on any recorded commit that is neither in the
+  history nor mapped. One mapping (v4, `a3a3e83` → `a2ce7a9`) was confirmed by
+  diff. The rest are **inferred** from run dates and the commits that recorded
+  them, and stay marked that way until someone diffs them against the originals
+  where those still exist. In the linear history, each commit that records a
+  result contains the code that run used. The service-hardening commits come
+  after all recorded runs.

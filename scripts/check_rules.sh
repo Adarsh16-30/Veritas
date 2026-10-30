@@ -217,6 +217,17 @@ if [ -f docs/results.md ]; then
   else pass "RULE 10 all reported numbers cite a results file"; fi
 else bad "RULE 10 docs/results.md missing"; fi
 
+# RULE 10 — and the commit each result cites can still be checked out. A history
+# rewrite orphans recorded commits without breaking any citation's syntax.
+if [ -f scripts/check_provenance.py ]; then
+  out=$(python scripts/check_provenance.py 2>&1); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    pass "RULE 10 every recorded commit is in history or mapped (docs/provenance.md)"
+    [ -n "$out" ] && echo "$out" | sed 's/^/      /'
+  elif [ "$rc" -eq 2 ]; then skip "RULE 10 provenance: $out"
+  else bad "RULE 10 results cite commits that cannot be checked out:"; echo "$out" | sed 's/^/      /'; fi
+else skip "RULE 10 provenance check not present"; fi
+
 # PRD §9 — "PROVIDED — DO NOT MODIFY" blocks must stay byte-identical.
 # Not one of the ten rules, but the primitives Rules 5, 6, 3 and 9 rest on. A
 # formatter silently reflowed these once; now it is checked.
