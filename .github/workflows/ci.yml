@@ -74,6 +74,9 @@ jobs:
       - name: non-negotiable rule check
         run: bash scripts/check_rules.sh
 
+      - name: every published number follows from the committed results (Phase 7)
+        run: bash scripts/reproduce.sh
+
       - name: dependency audit
         run: |
           uv export --frozen --no-dev --no-hashes --no-emit-project \

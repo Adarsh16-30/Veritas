@@ -27,13 +27,20 @@ Changelog
    ``«…»`` and both system prompts say what that marking means (injection
    hardening); ``boundary_at_tolerance`` rounds its invoice down so it never
    lands a fraction of a cent over the tolerance it is labelled as meeting.
+3. The S1 description fact no longer overclaims. ``item_description_free_of_instructions``
+   becomes ``item_description_passes_injection_screen``: a pattern list can show a
+   known injection is present, never that text is free of one. The S1 checklist and
+   both system prompts now have the models judge the quoted item name themselves.
+   Cause: every v5 false commit (12 of 12) came from the two indirect-injection
+   workflows that ran to completion under a "free of instructions = True" fact.
+   Runs: b6 / c6 / v6. Watch the clean controls: this can cost false escalations.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-EVIDENCE_VERSION = 2
+EVIDENCE_VERSION = 3
 
 #: What a results file written before these fields existed was recorded under.
 LEGACY = {"evidence_version": 1, "erp_access": "single identity", "model_backend": "ollama"}

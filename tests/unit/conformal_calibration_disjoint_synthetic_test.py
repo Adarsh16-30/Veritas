@@ -314,3 +314,22 @@ def test_signals_never_include_the_executor_rationale() -> None:
     )
     assert set(sig) == set(FEATURES)
     assert not any("rational" in k for k in sig)
+
+
+def test_ece_uncertainty_separates_noise_from_miscalibration() -> None:
+    """A perfectly calibrated model still scores ECE > 0 on a small sample; the
+    floor says how much. A badly miscalibrated one sits far above it."""
+    import random
+
+    from verify.conformal import COMMIT, ESCALATE, ece, ece_uncertainty
+
+    rng = random.Random(3)
+    probs = [rng.uniform(0.05, 0.95) for _ in range(170)]
+    calibrated = [COMMIT if rng.random() < p else ESCALATE for p in probs]
+    stats = ece_uncertainty(probs, calibrated, resamples=300)
+    assert 0.0 < stats["ece_noise_floor"] < 0.15
+    assert stats["ece_ci_low"] <= ece(probs, calibrated) <= stats["ece_ci_high"]
+
+    overconfident = [0.99 if p >= 0.5 else 0.01 for p in probs]
+    bad = ece_uncertainty(overconfident, calibrated, resamples=300)
+    assert ece(overconfident, calibrated) > 3 * bad["ece_noise_floor"]

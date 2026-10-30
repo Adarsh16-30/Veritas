@@ -39,7 +39,7 @@ CLEAN: dict[Step, dict[str, object]] = {
         # accounting rule should decide. They are here because a fact the
         # assembler emits must still be present for every step it belongs to.
         "item_description_informative": True,
-        "item_description_free_of_instructions": True,
+        "item_description_passes_injection_screen": True,
     },
     Step.S2: {
         "estimated_total": "50.00",

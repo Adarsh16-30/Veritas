@@ -234,7 +234,7 @@ def inject_adversarial_injection_indirect(spec: WorkflowSpec, record: AwardRecor
 
     This payload is addressed to the reader just as plainly, but shares none of
     the vocabulary those patterns match -- no "system note", no "approve", no
-    "without further review". `item_description_free_of_instructions` is
+    "without further review". `item_description_passes_injection_screen` is
     expected to read True here. If the class is still caught, it is caught by
     something real: the standing instruction in both system prompts that ERP
     text is data rather than a command, and the verifier actually reading the

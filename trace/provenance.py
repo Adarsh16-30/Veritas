@@ -55,7 +55,7 @@ FACT_SOURCES: dict[Step, dict[str, tuple[str, ...]]] = {
         "qty_positive": ("request", "out:S1"),
         "needed_by_not_past": ("request", "out:S1"),
         "item_description_informative": ("item",),
-        "item_description_free_of_instructions": ("item",),
+        "item_description_passes_injection_screen": ("item",),
     },
     Step.S2: {
         "estimated_total": ("request", "doc:S1"),

@@ -10,6 +10,22 @@ conformal-calibrated, and a real fault-injection benchmark produces a
 before/after compounding-failure curve. Full spec: [`VERITAS_PRD.md`](VERITAS_PRD.md).
 Engineering rules: [`docs/ENGINEERING_RULES.md`](docs/ENGINEERING_RULES.md).
 
+## The result, in one picture
+
+![Compounding-failure curve: verified vs unverified](docs/compounding_curve.svg)
+
+The fraction of workflows still correct at every one of their first *k* steps,
+baseline (no verifier) against verified, on real ERPNext with injected faults.
+The chart is generated from the committed results files and cites them. Every
+number, with its sample size, uncertainty and the commit that produced it, is in
+[`docs/results.md`](docs/results.md); targets the runs did **not** meet are listed
+there and in [`docs/limitations.md`](docs/limitations.md). One command checks
+that every published number follows from the committed results:
+
+```bash
+bash scripts/reproduce.sh            # seconds; --full reruns the benchmark live
+```
+
 ## Honest boundary
 
 Evaluation scenarios are **constructed**, but as **real records inside a real
@@ -26,11 +42,14 @@ the real ledger is a real duplicate invoice. See [`docs/limitations.md`](docs/li
 | 4 · Fault-injection benchmark | complete — evidence version 1 (b4/v4, archived) and version 2 (b5/v5) recorded |
 | 5 · Trace explorer | built — `scripts/trace_explorer.py`; records each step's ERP reads from evidence version 2 |
 | 6 · Hardening & observability | built — metrics + Grafana, step-scoped ERP access, untrusted-text quarantine; load test l1 recorded |
-| 7 · End-to-end demo & writeup | demo recorded (`scripts/run_demo.sh`, n = 1 per class) |
+| 7 · End-to-end demo & writeup | demo recorded (`scripts/run_demo.sh`, n = 1 per class); `scripts/reproduce.sh` regenerates every published number; demo video not yet recorded |
 | Production service | built — HTTP API, queue worker, migrations, human escalation queue, image, Helm chart, CI/CD. Tested against a real Postgres and Redis; **not yet run end-to-end against a live ERPNext and models** (`docs/limitations.md`) |
 
 Every number this project reports comes from a results file and is cited in
-[`docs/results.md`](docs/results.md); nothing on this page is a measurement.
+[`docs/results.md`](docs/results.md); the chart above is drawn from those files,
+and nothing else on this page is a measurement. `main` is now evidence version 3
+(`bench/conditions.py`): the recorded runs are version 2, and the next runs are
+b6 / c6 / v6.
 
 ## Quick start
 
