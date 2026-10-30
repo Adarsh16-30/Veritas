@@ -25,6 +25,7 @@ Enforced from day one:
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 
@@ -37,6 +38,7 @@ from orchestrator.budget import LlmBudget, WorkflowBudget
 from orchestrator.checkpoint import advance
 from orchestrator.db import Store
 from orchestrator.steps import writes_for
+from trace.logging import log_context
 from trace.store import TraceLogger
 from verify.gate import GateOutcome, VerificationGate
 
@@ -59,6 +61,9 @@ class Policy:
         look worse for a reason that has nothing to do with verification.
         """
         return cls(max_attempts_per_step=3, max_llm_calls_per_workflow=36)
+
+
+_log = logging.getLogger("veritas.pipeline")
 
 
 #: The executor's own choice, mapped to a route. This is the **baseline** router,
@@ -102,7 +107,22 @@ class Pipeline:
         # context reads, the rule gate's ledger reads, the commit -- runs under
         # this step's scope. A no-op on a single-identity client; see erp/scoped.py.
         with self.erp.acting_for(ctx.step.value):
-            return self._run_step(ctx)
+            with log_context(workflow_id=ctx.workflow_id, step=ctx.step.value):
+                result = self._run_step(ctx)
+            _log.info(
+                "step %s",
+                result.route.value,
+                extra={
+                    "workflow_id": ctx.workflow_id,
+                    "step": ctx.step.value,
+                    "route": result.route.value,
+                    "committed": result.committed,
+                    "attempts": result.attempts,
+                    "reason": result.reason,
+                    "latency_ms": result.latency_ms,
+                },
+            )
+            return result
 
     def _run_step(self, ctx: StepContext) -> StepResult:
         started = time.monotonic()

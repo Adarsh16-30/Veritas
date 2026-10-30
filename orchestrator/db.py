@@ -31,7 +31,8 @@ def dsn_from_env() -> str:
         f"port={os.environ.get('POSTGRES_PORT', '5433')} "
         f"dbname={os.environ.get('POSTGRES_DB', 'veritas')} "
         f"user={os.environ.get('POSTGRES_USER', 'veritas')} "
-        f"password={os.environ.get('POSTGRES_PASSWORD', 'veritas')}"
+        f"password={os.environ.get('POSTGRES_PASSWORD', 'veritas')} "
+        f"sslmode={os.environ.get('POSTGRES_SSLMODE', 'prefer')}"
     )
 
 
