@@ -1,0 +1,40 @@
+{
+  "commit": "4abe038d2c5367fc49e4f9050e2f47253d2a4bee",
+  "completed_at": "2026-10-30T12:15:03+00:00",
+  "config": "baseline",
+  "documents_committed_twice": [],
+  "erp_access": "step-scoped (S1-S3 buyer identity, S4-S6 finance identity)",
+  "error_messages": [],
+  "errors": [],
+  "evidence_version": 2,
+  "finished": 50,
+  "held_up": true,
+  "latency_e2e_s": {
+    "mean": 472.06410000003876,
+    "p50": 482.14000000001397,
+    "p95": 873.2820000000065
+  },
+  "latency_service_s": {
+    "p50": 74.64000000001397,
+    "p95": 76.92199999990407
+  },
+  "llm_call_cap": 18,
+  "max_executing": 4,
+  "max_in_flight": 50,
+  "max_llm_calls": 6,
+  "queue_wait_s": {
+    "p50": 407.375,
+    "p95": 797.75
+  },
+  "run_more_than_once": [],
+  "run_tag": "l1",
+  "started_at": "2026-10-30T11:59:47+00:00",
+  "status_counts": {
+    "completed": 50
+  },
+  "throughput_per_min": 3.28,
+  "unfinished": 0,
+  "wall_clock_s": 915.8,
+  "workers": 4,
+  "workflows": 50
+}
