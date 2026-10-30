@@ -1,7 +1,7 @@
 """Apply the agent state schema to the agent Postgres (PRD §3.3).
 
-Idempotent — every statement in ``orchestrator/schema.sql`` is CREATE ... IF NOT
-EXISTS or CREATE OR REPLACE. Safe to re-run.
+Applies every pending migration in ``orchestrator/migrations/`` (see
+``scripts/migrate.py``). Safe to re-run.
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ def main() -> int:
     dsn = dsn_from_env()
     print(f"applying schema to: {dsn.replace(chr(10), ' ')}")
     with Store() as store:
-        store.apply_schema()
+        applied = store.apply_schema()
+        print("migrations applied: " + (", ".join(applied) or "none (up to date)"))
         rows = store.conn.execute(
             "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
         ).fetchall()

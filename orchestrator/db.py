@@ -15,14 +15,11 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
-
-SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
 def dsn_from_env() -> str:
@@ -44,8 +41,11 @@ class Store:
         self._binding: tuple[str, str, str] | None = None
 
     # --- lifecycle -----------------------------------------------------------
-    def apply_schema(self) -> None:
-        self.conn.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
+    def apply_schema(self) -> list[str]:
+        """Apply pending migrations (orchestrator/migrate.py); return those applied."""
+        from orchestrator.migrate import apply
+
+        return apply(self.conn)
 
     def close(self) -> None:
         self.conn.close()

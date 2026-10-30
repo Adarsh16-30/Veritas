@@ -100,10 +100,14 @@ class Settings(BaseSettings):
     defer_base_s: int = Field(default=30, ge=1, le=3600)
     breaker_failures: int = Field(default=5, ge=1, le=1000)
     breaker_cooldown_s: int = Field(default=60, ge=1, le=3600)
+    worker_poll_s: int = Field(default=5, ge=1, le=60)
+    requeue_interval_s: int = Field(default=300, ge=30, le=86_400)
+    worker_health_host: str = "127.0.0.1"
+    worker_health_port: int = Field(default=9109, ge=1, le=65535)
 
     # --- API --------------------------------------------------------------------
     api_host: str = "127.0.0.1"
-    api_port: int = Field(default=8080, ge=1, le=65535)
+    api_port: int = Field(default=8090, ge=1, le=65535)  # ERPNext holds 8080
     api_rate_limit_per_min: int = Field(default=60, ge=1, le=100_000)
     api_max_body_bytes: int = Field(default=65_536, ge=1024, le=10_485_760)
 

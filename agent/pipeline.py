@@ -34,11 +34,12 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from agent.context import ContextAssembler
 from agent.executor import Decision, Executor, ExecutorError
-from agent.state import SIDE_EFFECTING, Action, Route, Status, StepContext, StepResult
+from agent.state import SIDE_EFFECTING, Action, Route, Status, Step, StepContext, StepResult
 from erp.client import DOCSTATUS_CANCELLED, DOCSTATUS_DRAFT, ERPClient, ERPError
 from erp.idempotent import submit_once
 from erp.resilience import InfrastructureUnavailable
@@ -49,7 +50,10 @@ from orchestrator.lease import ensure_lease
 from orchestrator.steps import writes_for
 from trace.logging import log_context
 from trace.store import TraceLogger
-from verify.gate import GateOutcome, VerificationGate
+from verify.gate import GateOutcome, VerificationGate, human_overridable
+
+#: ``(workflow_id, step) -> human_decisions.id`` of an unconsumed approval, or None.
+OverrideLookup = Callable[[str, Step], int | None]
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,7 @@ class Pipeline:
         tracer: TraceLogger,
         policy: Policy | None = None,
         gate: VerificationGate | None = None,
+        override_for: OverrideLookup | None = None,
     ) -> None:
         self.db = db
         self.erp = erp
@@ -102,6 +107,9 @@ class Pipeline:
         self.executor = executor
         self.tracer = tracer
         self.gate = gate
+        # The service's escalation queue (service/). None everywhere else --
+        # the benchmark never consults a human, so its routes are unchanged.
+        self.override_for = override_for
         self.policy = policy or (Policy.verified() if gate is not None else Policy())
 
     @property
@@ -182,6 +190,8 @@ class Pipeline:
             )
 
             outcome = self._gate(ctx, budget, attempts_remaining)
+            if outcome is not None and outcome.route is not Route.COMMIT:
+                self._apply_override(ctx, decision, outcome)
             route = outcome.route if outcome else _ROUTE_OF[decision.action]
             reason = (
                 outcome.reason
@@ -244,6 +254,27 @@ class Pipeline:
             started,
             self.policy.max_attempts_per_step,
         )
+
+    def _apply_override(self, ctx: StepContext, decision: Decision, outcome: GateOutcome) -> None:
+        """Lift the gate's veto when a human approved this step, and only then.
+
+        Every condition must hold: the executor itself proposed ``proceed``
+        (Rule 2 -- a human may overrule the verifier, not stand in for the
+        agent), the hard rules passed, the objection is one a human may overrule
+        (``human_overridable``), and an approval recorded for exactly this step
+        has not already been spent on a commit. The gate still ran in full, so
+        the trace shows what was overruled and by which decision.
+        """
+        if self.override_for is None or decision.action is not Action.PROCEED:
+            return
+        if not outcome.rule_report.ok or not human_overridable(outcome.reason):
+            return
+        decision_id = self.override_for(ctx.workflow_id, ctx.step)
+        if decision_id is None:
+            return
+        outcome.override_decision = decision_id
+        outcome.reason = f"human_override: decision {decision_id} over {outcome.reason}"
+        outcome.route = Route.COMMIT
 
     # --- the verification gate (absent in the baseline configuration) ------------
     def _gate(

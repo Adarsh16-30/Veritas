@@ -55,7 +55,8 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # otherwise file it under stdlib. Recorded in docs/limitations.md.
 [tool.ruff.lint.isort]
 known-first-party = [
-    "agent", "bench", "data", "erp", "harness", "orchestrator", "trace", "ui", "verify",
+    "agent", "bench", "data", "erp", "harness", "orchestrator", "service", "trace", "ui",
+    "verify",
 ]
 
 [tool.pytest.ini_options]
@@ -70,7 +71,7 @@ markers = [
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
-files = ["agent", "verify", "orchestrator", "erp", "data", "harness", "trace", "bench"]
+files = ["agent", "verify", "orchestrator", "erp", "data", "harness", "trace", "bench", "service"]
 
 # PRD §9 code is PROVIDED VERBATIM and must not be modified to satisfy a linter.
 # Relax strict-mode flags for exactly those modules; everything else stays strict.

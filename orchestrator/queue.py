@@ -85,7 +85,12 @@ class WorkQueue:
         return int(self.r.llen(QUEUE_KEY))
 
     def dequeue(self, timeout: int = 5) -> str | None:
-        item = self.r.brpop([QUEUE_KEY], timeout=timeout)
+        try:
+            item = self.r.brpop([QUEUE_KEY], timeout=timeout)
+        except redis.TimeoutError:
+            # redis-py's read deadline equals the blocking timeout, so an empty
+            # poll can race the server's own empty reply. Either way: nothing.
+            return None
         return str(item[1]) if item else None
 
     # --- delayed retries ----------------------------------------------------------
@@ -176,6 +181,8 @@ class Worker:
         self.deferred = 0
         self.gave_up = 0
         self.leases_lost = 0
+        self.redis_errors = 0
+        self.failed = 0
 
     def run(
         self,
@@ -185,9 +192,20 @@ class Worker:
     ) -> int:
         """Drain the queue until stopped or until ``max_workflows`` are done."""
         stop = stop or threading.Event()
+        redis_failures = 0
         while not stop.is_set() and (max_workflows is None or self.processed < max_workflows):
-            self.queue.promote_due()
-            workflow_id = self.queue.dequeue(timeout=poll_timeout)
+            try:
+                self.queue.promote_due()
+                workflow_id = self.queue.dequeue(timeout=poll_timeout)
+                redis_failures = 0
+            except redis.RedisError as e:
+                # The queue itself is down. Nothing is owned yet, so nothing is at
+                # risk: wait and try again rather than let the thread die.
+                redis_failures += 1
+                delay = defer_delay(redis_failures, 1, 30)
+                _log.warning("queue unavailable", extra={"error": str(e), "retry_s": delay})
+                stop.wait(delay)
+                continue
             if workflow_id is None:
                 continue
             try:
@@ -206,8 +224,35 @@ class Worker:
                 self.leases_lost += 1
                 _log.warning("lease lost", extra={"workflow_id": workflow_id})
             except InfrastructureUnavailable as e:
-                self._defer(workflow_id, e)
+                try:
+                    self._defer(workflow_id, e)
+                except redis.RedisError as err:
+                    self._lost_to_redis(workflow_id, err)
+            except redis.RedisError as e:
+                # Redis failed around the workflow (lock, release, bookkeeping).
+                # Its checkpoints are durable in Postgres; the service's periodic
+                # sweep re-enqueues it once Redis is back (service/worker.py).
+                self._lost_to_redis(workflow_id, e)
+            except Exception as e:  # noqa: BLE001 - a bug must not kill the thread
+                # Not an outage and not a decision: a fault in the code. Rule 7:
+                # stop and hand it to a human, rather than retry it forever.
+                self.failed += 1
+                _log.exception("workflow failed", extra={"workflow_id": workflow_id})
+                self._give_up(workflow_id, f"worker_error: {type(e).__name__}: {e}")
         return self.processed
+
+    def _give_up(self, workflow_id: str, reason: str) -> None:
+        try:
+            self.on_give_up(workflow_id, reason)
+        except Exception:  # noqa: BLE001 - the requeue sweep finds it again
+            _log.exception("could not record a hand-off", extra={"workflow_id": workflow_id})
+
+    def _lost_to_redis(self, workflow_id: str, error: Exception) -> None:
+        self.redis_errors += 1
+        _log.error(
+            "queue unavailable mid-workflow",
+            extra={"workflow_id": workflow_id, "error": str(error)},
+        )
 
     def _defer(self, workflow_id: str, error: InfrastructureUnavailable) -> None:
         n = self.queue.count_deferral(workflow_id)
@@ -216,7 +261,7 @@ class Worker:
             self.gave_up += 1
             reason = f"infrastructure_unavailable: {error}"
             _log.error("giving up", extra={"workflow_id": workflow_id, "reason": reason})
-            self.on_give_up(workflow_id, reason)
+            self._give_up(workflow_id, reason)
             return
         delay = defer_delay(n, self.defer_base_s, self.defer_cap_s, error.retry_after)
         self.queue.defer(workflow_id, delay)

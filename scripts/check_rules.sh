@@ -179,6 +179,19 @@ if [ -f agent/pipeline.py ]; then
   fi
 else skip "RULE 7 agent/pipeline.py not present yet (pre-Phase 2)"; fi
 
+# RULE 2/7 — a human approval lifts only the verifier's veto. Hard invariants,
+# the agent's own refusal and a spent budget are never approvable. Static, so it
+# needs no dependencies; tests/integration/service_api_synthetic_test.py and the
+# pipeline's override tests pin the behaviour.
+if [ -f verify/gate.py ] && grep -q 'HUMAN_OVERRIDABLE_PREFIXES' verify/gate.py; then
+  block=$(awk '/^HUMAN_OVERRIDABLE_PREFIXES/,/^\)/' verify/gate.py)
+  h=$(echo "$block" | grep -nE 'hard_rule|floor|executor_chose|budget|retry_cap' || true)
+  guard=$(grep -c 'rule_report.ok' agent/pipeline.py || true)
+  if [ -n "$h" ]; then bad "RULE 2/7 an overridable prefix lifts what it must not:"; echo "$h" | sed 's/^/      /'
+  elif [ "${guard:-0}" -lt 1 ]; then bad "RULE 2/7 the pipeline override no longer checks the hard rules"
+  else pass "RULE 2/7 hard rules, agent refusals and spent budgets are never approvable"; fi
+else skip "RULE 2/7 no human override present"; fi
+
 # PRD Phase 6 — least privilege: "S1–S3 hold no payment scope". Not one of the
 # ten rules, but a guarantee the same way: the local write/call scope must give
 # S1..S3 nothing that touches a payment, the buyer identity must cover exactly

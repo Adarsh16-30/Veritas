@@ -297,3 +297,179 @@ def test_defer_delay_grows_is_capped_and_honours_retry_after() -> None:
     assert all(d <= 900 for d in (defer_delay(n, 30, 900, rng=rng) for n in range(1, 20)))
     assert defer_delay(1, 30, 900, retry_after=120, rng=rng) == 120
     assert defer_delay(1, 30, 900, retry_after=5000, rng=rng) == 900
+
+
+# --- a human approval lifts only the verifier's veto ----------------------------------
+class GateStub:
+    def __init__(self, outcome: Any) -> None:
+        self.outcome = outcome
+
+    def evaluate(self, ctx: StepContext, budget: Any, attempts_remaining: int) -> Any:
+        return self.outcome
+
+
+def _gated(action: Action, outcome: Any, approval: int | None) -> tuple[Any, StubDB, list[Any]]:
+    seen: list[Any] = []
+    pipe, db = _pipeline(ScriptedExecutor(action))
+    pipe.gate = GateStub(outcome)  # type: ignore[assignment]
+    pipe.override_for = lambda wf, step: approval
+
+    def commit(ctx: StepContext) -> list[str]:
+        seen.append(outcome.route)
+        return ["DOC-1"]
+
+    pipe._commit = commit  # type: ignore[method-assign]
+    return pipe.run_step(_ctx(Step.S5)), db, seen
+
+
+def _escalation(reason: str, violations: tuple[Any, ...] = ()) -> Any:
+    from agent.state import Route
+    from verify.gate import GateOutcome
+    from verify.rules import RuleReport
+
+    return GateOutcome(
+        route=Route.ESCALATE, reason=reason, rule_report=RuleReport(violations=violations)
+    )
+
+
+def test_an_approval_overrules_a_verifier_objection() -> None:
+    outcome = _escalation("verifier_rejected: amount within approved authority")
+    result, _, seen = _gated(Action.PROCEED, outcome, approval=7)
+    assert result.committed and seen  # the step committed
+    assert outcome.override_decision == 7
+    assert outcome.as_dict()["override_decision"] == 7  # recorded in the trace
+    assert outcome.reason.startswith("human_override: decision 7 over verifier_rejected")
+
+
+def test_a_hard_rule_violation_is_never_overridden() -> None:
+    from verify.rules import Violation
+
+    outcome = _escalation(
+        "hard_rule_violation: S5_WITHIN_APPROVED_AUTHORITY",
+        (Violation("S5_WITHIN_APPROVED_AUTHORITY", "over authority", "invariant"),),
+    )
+    result, db, seen = _gated(Action.PROCEED, outcome, approval=7)
+    assert not result.committed and not seen and Status.ESCALATED.value in db.statuses
+    assert outcome.override_decision is None
+
+
+def test_an_agent_that_declined_is_not_overruled_into_proceeding() -> None:
+    """Rule 2: a human may overrule the verifier, never stand in for the executor."""
+    outcome = _escalation("low_confidence: region commit,escalate")
+    result, _, seen = _gated(Action.HOLD, outcome, approval=7)
+    assert not result.committed and not seen and outcome.override_decision is None
+
+
+def test_no_approval_means_no_override() -> None:
+    outcome = _escalation("low_confidence: region commit,escalate")
+    result, _, seen = _gated(Action.PROCEED, outcome, approval=None)
+    assert not result.committed and not seen
+
+
+def test_the_benchmark_never_consults_a_human() -> None:
+    pipe, _ = _pipeline(ScriptedExecutor(Action.PROCEED))
+    assert pipe.override_for is None
+
+
+# --- a queue outage never kills a worker thread ----------------------------------------
+def test_the_worker_loop_survives_a_redis_outage() -> None:
+    import threading
+
+    import redis
+
+    from orchestrator.queue import Worker
+
+    stop = threading.Event()
+
+    class FlakyQueue:
+        """Down for two polls, then up; on the first good poll it stops the worker."""
+
+        def __init__(self) -> None:
+            self.polls = 0
+
+        def promote_due(self) -> int:
+            return 0
+
+        def dequeue(self, timeout: int) -> str | None:
+            self.polls += 1
+            if self.polls <= 2:
+                raise redis.ConnectionError("Connection refused")
+            stop.set()
+            return None
+
+        def dead_letter(self, *_: Any) -> None:
+            pass
+
+    waits: list[float] = []
+
+    def no_sleep(delay: float | None = None) -> bool:
+        waits.append(delay or 0.0)
+        return stop.is_set()
+
+    stop.wait = no_sleep  # type: ignore[method-assign]
+    q = FlakyQueue()
+    w = Worker(q, lambda _: None)  # type: ignore[arg-type]
+    t = threading.Thread(target=w.run, kwargs={"stop": stop, "poll_timeout": 1})
+    t.start()
+    t.join(timeout=10)
+    assert not t.is_alive() and q.polls == 3  # it backed off twice, then polled again
+    assert len(waits) == 2 and all(0 < d <= 30 for d in waits)
+
+
+def test_a_bug_in_a_workflow_goes_to_a_human_and_the_thread_lives_on() -> None:
+    import threading
+
+    from orchestrator.queue import Worker
+
+    stop = threading.Event()
+    handed: list[tuple[str, str]] = []
+
+    class OneItem:
+        def __init__(self) -> None:
+            self.items = ["wf-bug", "wf-ok"]
+
+        def promote_due(self) -> int:
+            return 0
+
+        def dequeue(self, timeout: int) -> str | None:
+            if not self.items:
+                stop.set()
+                return None
+            return self.items.pop(0)
+
+        @contextmanager
+        def lock(self, *_: Any, **__: Any) -> Iterator[None]:
+            yield
+
+        def clear_deferrals(self, _: str) -> None:
+            pass
+
+        def dead_letter(self, *_: Any) -> None:
+            pass
+
+    ran: list[str] = []
+
+    def run(workflow_id: str) -> None:
+        if workflow_id == "wf-bug":
+            raise KeyError("needed_by")
+        ran.append(workflow_id)
+
+    w = Worker(OneItem(), run, on_give_up=lambda wf, why: handed.append((wf, why)))  # type: ignore[arg-type]
+    w.run(stop=stop, poll_timeout=1)
+    assert handed == [("wf-bug", "worker_error: KeyError: 'needed_by'")]
+    assert ran == ["wf-ok"] and w.failed == 1 and w.processed == 1
+
+
+def test_an_unreachable_ollama_is_an_outage_when_choosing_a_verifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from verify.gate import select_verifier_model
+
+    monkeypatch.delenv("VERIFIER_MODEL", raising=False)
+
+    def refused(*_: Any, **__: Any) -> Any:
+        raise requests.ConnectionError("Connection refused")
+
+    monkeypatch.setattr("verify.gate.requests.get", refused)
+    with pytest.raises(ModelUnavailable):
+        select_verifier_model("llama3:8b", url="http://127.0.0.1:1")

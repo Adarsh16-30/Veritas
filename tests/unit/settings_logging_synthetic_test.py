@@ -24,7 +24,13 @@ PROD_OK = {
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("VERITAS_ENV", "POSTGRES_PASSWORD", "POSTGRES_PASSWORD_FILE", "MODEL_BACKEND"):
+    for name in (
+        "VERITAS_ENV",
+        "POSTGRES_PORT",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_PASSWORD_FILE",
+        "MODEL_BACKEND",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 

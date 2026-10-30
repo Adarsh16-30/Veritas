@@ -33,7 +33,7 @@ from typing import Any
 import requests
 
 from agent.context import WorkflowSpec
-from agent.executor import LLM, OllamaLLM
+from agent.executor import LLM, ModelUnavailable, OllamaLLM
 from agent.state import Action, Region, Route, StepContext, Verdict
 from erp.client import ERPClient
 from orchestrator.budget import LlmBudget
@@ -56,12 +56,34 @@ VERIFIER_PREFERENCES: tuple[str, ...] = (
 DEFAULT_CALIBRATION_PATH = Path("results/calibration.json")
 
 
+#: Escalations a human approver may lift: the independent verifier objected,
+#: could not produce a verdict, or the conformal region was not confident. Each
+#: is a judgement a person can legitimately overrule with a recorded reason.
+#:
+#: Never overridable: ``hard_rule_violation`` (deterministic accounting
+#: invariants; an approval cannot make arithmetic true), a ``floor:`` or
+#: ``executor_chose_*`` refusal (the agent itself declined, Rule 2), the model-call
+#: budget (Rule 7), and ``retry_cap_exhausted`` (a fault, not a judgement).
+HUMAN_OVERRIDABLE_PREFIXES: tuple[str, ...] = (
+    "verifier_rejected:",
+    "verifier_unusable:",
+    "low_confidence:",
+)
+
+
+def human_overridable(reason: str | None) -> bool:
+    return bool(reason) and str(reason).startswith(HUMAN_OVERRIDABLE_PREFIXES)
+
+
 @dataclass
 class GateOutcome:
     """Everything the gate concluded, kept whole for the trace and for Phase 4."""
 
     route: Route
     reason: str | None = None
+    #: Set when a human's recorded approval lifted this outcome's veto
+    #: (``human_overridable``); the ``human_decisions`` row that did it.
+    override_decision: int | None = None
     rule_report: RuleReport = field(default_factory=RuleReport)
     verdict: Verdict | None = None
     region: Region | None = None
@@ -76,6 +98,11 @@ class GateOutcome:
         return {
             "route": self.route.value,
             "reason": self.reason,
+            **(
+                {}
+                if self.override_decision is None
+                else {"override_decision": self.override_decision}
+            ),
             "rules": self.rule_report.as_dict(),
             "verdict": (
                 None
@@ -250,7 +277,10 @@ def select_verifier_model(executor_model: str, url: str | None = None) -> str:
         r = requests.get(f"{base}/api/tags", timeout=10)
         r.raise_for_status()
         installed = [str(m["name"]) for m in r.json().get("models", [])]
-    except (requests.RequestException, ValueError, KeyError) as e:
+    except requests.RequestException as e:
+        # The model server is down: an outage, deferred like any other.
+        raise ModelUnavailable(f"ollama unreachable at {base}: {e}") from e
+    except (ValueError, KeyError) as e:
         raise VerifierError(f"cannot list models at {base} to choose a verifier: {e}") from e
 
     family = model_family(executor_model)
