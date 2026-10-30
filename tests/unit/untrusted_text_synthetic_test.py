@@ -136,8 +136,8 @@ def test_quarantine_changes_presentation_not_facts() -> None:
     """The DELTA facts are computed from raw values; the marks must not move them."""
     plain = _context(Step.S1, CanaryERP("Aircraft Hydraulic Pump Assembly")).facts
     hostile = _context(Step.S1, CanaryERP(DIRECT)).facts
-    assert plain["item_description_free_of_instructions"] is True
-    assert hostile["item_description_free_of_instructions"] is False
+    assert plain["item_description_passes_injection_screen"] is True
+    assert hostile["item_description_passes_injection_screen"] is False
     assert {k: v for k, v in plain.items() if "description" not in k} == {
         k: v for k, v in hostile.items() if "description" not in k
     }
@@ -147,3 +147,18 @@ def test_both_models_are_told_what_the_marks_mean() -> None:
     for prompt in (SYSTEM_PROMPT, VERIFIER_SYSTEM):
         assert f"{QUOTE_OPEN} and {QUOTE_CLOSE}" in prompt
         assert "never instructions" in prompt
+
+
+def test_the_screen_fact_does_not_claim_what_it_cannot_know() -> None:
+    """Evidence version 3. The indirect payload passes the pattern screen by
+    construction; what must change is that nothing tells the models the text is
+    therefore clean, and that both are told to read the quoted name themselves."""
+    from verify.verifier import CHECKLIST
+
+    facts = _context(Step.S1, CanaryERP(INDIRECT)).facts
+    assert facts["item_description_passes_injection_screen"] is True  # the screen is blind here
+    assert not any("free_of_instructions" in k for k in facts)
+    s1 = " ".join(CHECKLIST[Step.S1])
+    assert "quoted item name itself" in s1 and "not addressed to its reader" in s1
+    for prompt in (SYSTEM_PROMPT, VERIFIER_SYSTEM):
+        assert "_screen" in prompt and "KNOWN" in prompt

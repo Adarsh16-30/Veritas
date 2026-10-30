@@ -305,7 +305,14 @@ class ContextAssembler:
             "item_description_informative": (
                 not named_after_its_own_code and describes_goods(name)
             ),
-            "item_description_free_of_instructions": not reads_as_instructions(name),
+            # A pattern screen, named as one. It can say that a KNOWN injection
+            # phrasing is present (False); it cannot say the text is free of
+            # instructions, and until evidence version 3 it claimed exactly that.
+            # Both indirect-injection misses in v5 ran to completion under a fact
+            # that read "free of instructions = True" for text it never
+            # understood. The models now judge the quoted name themselves (both
+            # system prompts, verify/verifier.py CHECKLIST[S1]).
+            "item_description_passes_injection_screen": not reads_as_instructions(name),
         }
         return facts, summary, est
 
