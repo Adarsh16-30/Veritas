@@ -7,6 +7,7 @@ results files, so they can be checked against ``docs/results.md``.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,6 +21,7 @@ from trace.metrics import VeritasCollector, reason_class, run_tag
 
 ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE = ROOT / "results" / "archive" / "phase4-pre-gapfix"
+ARCHIVE_V1 = ROOT / "results" / "archive" / "evidence-v1-b4-v4"
 
 
 def _scrape(store: MemoryStore | None, results_dir: Path) -> dict[tuple[str, frozenset], float]:
@@ -136,8 +138,15 @@ def test_bench_gauges_match_the_published_report(store: MemoryStore) -> None:
     )
 
 
-def test_a_partial_run_says_so() -> None:
-    m = _scrape(MemoryStore(), ROOT / "results")
+def test_a_partial_run_says_so(tmp_path: Path) -> None:
+    # Truncate a real, complete verified run: the test must not depend on whether
+    # the live results/ directory happens to hold a finished or an unfinished run.
+    for name in ("baseline_results.json", "verified_results.json"):
+        payload = json.loads((ARCHIVE_V1 / name).read_text(encoding="utf-8"))
+        if name.startswith("verified"):
+            payload["results"] = payload["results"][:20]
+        (tmp_path / name).write_text(json.dumps(payload), encoding="utf-8")
+    m = _scrape(MemoryStore(), tmp_path)
     assert _get(m, "veritas_bench_complete", config="baseline") == 1
     assert _get(m, "veritas_bench_complete", config="verified") == 0
     assert _get(m, "veritas_bench_workflows", config="verified", kind="expected") == 44

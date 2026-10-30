@@ -58,6 +58,8 @@ def test_runs_under_different_conditions_say_so_on_the_chart() -> None:
     assert "CONDITIONS DIFFER" in svg and "evidence_version: 1 vs 2" in svg
 
 
-def test_the_committed_chart_cites_the_archive_it_was_drawn_from() -> None:
+def test_the_committed_chart_cites_the_results_it_was_drawn_from() -> None:
     svg = (ROOT / "docs" / "compounding_curve.svg").read_text(encoding="utf-8")
-    assert "results/archive/phase4-pre-gapfix/verified_results.json" in svg
+    assert "results/baseline_results.json" in svg
+    assert "results/verified_results.json" in svg
+    assert "INCOMPLETE" not in svg and "CONDITIONS DIFFER" not in svg
