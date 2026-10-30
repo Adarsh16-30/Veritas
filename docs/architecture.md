@@ -93,6 +93,42 @@ the store, or a resume into another run's file. `bench.report` and
 adds untrusted-text quarantine, the boundary rounding fix and recorded ERP
 reads.
 
+## Service layer (production hardening)
+
+```
+client ──HTTPS──▶ API (service/api.py) ──▶ Postgres: workflow_requests, workflows
+                     │                         ▲
+                     └──enqueue──▶ Redis ──▶ worker (service/worker.py)
+                                               │  lease per workflow (orchestrator/lease.py)
+                                               ▼
+                                       WorkflowMachine → Pipeline (verified)
+                                               │  three gates; ensure_lease() before each write
+                                               ▼
+                                     ERPNext (step-scoped identities)
+escalations ◀── GET /v1/escalations ◀── workflows.status = escalated
+decisions   ──▶ human_decisions (append-only) ──▶ re-enqueue ──▶ approval lifts the verifier's veto once
+```
+
+- **The API is thin.** It authenticates, validates, records the request
+  idempotently and enqueues it. It never calls ERPNext or a model, so it stays
+  small (about 90 MB) and fast whatever the agent is doing.
+- **The worker owns a workflow through a lease.** The lease is renewed in the
+  background and checked immediately before every write. A worker that lost it
+  writes nothing, and the next owner resumes from the checkpoint (Rule 6).
+- **Outages defer; they do not decide.** A typed `InfrastructureUnavailable`
+  propagates out of the pipeline without spending Rule 7's retries. The worker
+  re-queues it with backoff, a shared circuit breaker stops every worker hammering
+  a dead dependency, and past `MAX_DEFERRALS` the workflow goes to a human.
+- **Humans can overrule the verifier, never the rules or the agent.** An
+  approval lifts a `verifier_rejected` / `verifier_unusable` / `low_confidence`
+  veto only when the executor itself proposes `proceed` again and the hard rules
+  pass. The first commit that uses an approval spends it, and the trace names the
+  decision. The benchmark passes no approval lookup, so its routes are exactly as
+  measured.
+- **The schema is migrated forward-only** (`orchestrator/migrate.py`): each
+  migration is checksummed and runs under an advisory lock, and a rolled-back
+  release still starts.
+
 ## Model backends (production hardening)
 
 `agent/llm.py`. `Executor` and `Verifier` depend only on the `LLM` protocol, so

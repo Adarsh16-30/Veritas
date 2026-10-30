@@ -647,3 +647,43 @@ rather than being engineered around.
   where those still exist. In the linear history, each commit that records a
   result contains the code that run used. The service-hardening commits come
   after all recorded runs.
+
+### Production service — what is verified and what is not
+
+Verified in the development container (2026-10-30), against a real Postgres 16
+and Redis:
+
+- API auth, roles, idempotent submit, separation of duties, decision rules,
+  append-only decisions, rate limit and body limit;
+- migrations, the lease (heartbeat, takeover, two workers on one slow workflow)
+  and bounded deferral;
+- the worker surviving Redis timeouts, a bug in a workflow, and Postgres loss;
+- every guard mutation-checked.
+
+The container image was built and run on a read-only root with all
+capabilities dropped. Its memory under load is in `docs/operations.md`.
+
+**Not yet verified live:**
+
+- **No end-to-end run of the service against a live ERPNext and real models.**
+  The worker's outage path was exercised with both unreachable. A real
+  workflow through the service, including an approval that lifts a verifier
+  veto and then commits, has not been run.
+- **The Helm chart has not been rendered or installed here.** The `helm` and
+  `kubeconform` binaries could not be fetched in this environment.
+  `tests/unit/deploy_config_synthetic_test.py` checks it statically, and CI
+  (`release.yml`) lints, renders and schema-validates it. Nothing has been
+  deployed to a cluster, and the NetworkPolicies and alerts are unexercised.
+- **No load test through the service.** `bench/load.py` drives the
+  `WorkQueue` directly (load test l1). The API's own throughput was measured
+  with synthetic requests only.
+- **The approval override changes what a human can make the agent commit.** It
+  is bounded (verifier vetoes only, executor must propose `proceed`, hard rules
+  must pass, one commit per approval), but the benchmark does not measure it,
+  and it never runs in a benchmark configuration.
+- **Delivery and billing facts come from the request.** The service takes
+  `received_qty` and `invoice_rate` from the submitter rather than from a
+  receiving-dock or supplier-invoice integration, so the three-way match at S4
+  is only as independent as those inputs.
+- **The base image is pinned by tag, not digest.** CI's trivy scan gates
+  known vulnerabilities; pin the digest for a production deployment.

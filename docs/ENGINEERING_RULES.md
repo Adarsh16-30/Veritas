@@ -118,3 +118,9 @@ uv run pytest
 uv run ruff format --check . && uv run ruff check . && uv run mypy --strict
 uv run python scripts/check_provided_code.py
 ```
+
+`pytest` runs the store, migration, service and lease tests only when an agent
+Postgres is reachable (`POSTGRES_*`) and a `redis-server` binary is on the PATH;
+otherwise they skip, and a green run proves less than it appears to. CI provides
+both. A change to the image or the chart also needs `docker build .` and the
+`release` workflow (helm lint, kubeconform, trivy).
