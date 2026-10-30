@@ -18,6 +18,7 @@ def test_layout_present() -> None:
         "docs/architecture.md",
         "erp/idempotent.py",
         "orchestrator/checkpoint.py",
+        "docs/ENGINEERING_RULES.md",
         # The PRD and the local agent rules file are deliberately kept out of
         # the public repo. The PRD section 9 blocks they carry are pinned in
         # scripts/provided_code_reference.json instead.
