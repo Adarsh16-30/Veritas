@@ -175,13 +175,18 @@ def test_single_identity_client_scope_is_a_no_op(monkeypatch: pytest.MonkeyPatch
 
 def test_pipeline_runs_each_step_inside_its_scope() -> None:
     from agent.pipeline import Pipeline
-    from agent.state import Step, StepContext
+    from agent.state import Route, Step, StepContext, StepResult
 
     erp, _ = _client()
     seen: list[str | None] = []
     pipe = Pipeline.__new__(Pipeline)
     pipe.erp = erp
-    pipe._run_step = lambda ctx: seen.append(erp.current_step)  # type: ignore[method-assign,assignment,return-value]
+
+    def run(ctx: StepContext) -> StepResult:
+        seen.append(erp.current_step)
+        return StepResult(step=ctx.step, route=Route.COMMIT, action=None, committed=False)
+
+    pipe._run_step = run  # type: ignore[method-assign]
     for step in Step:
         pipe.run_step(StepContext(workflow_id="wf", step=step))
     assert seen == [s.value for s in Step]
