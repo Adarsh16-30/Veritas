@@ -392,6 +392,17 @@ class ERPClient:
         pi["bill_no"] = bill_no
         pi["bill_date"] = today
         pi["posting_date"] = today
+        # The mapper sets due dates from the ERPNext server's clock, and `today`
+        # comes from the agent's. When they straddle midnight (a laptop at
+        # UTC+5:30 against a container on UTC, 00:00-05:30 local) the due date
+        # lands a day before the posting date and ERPNext refuses the invoice:
+        # every clean S4 of the b6/c6/v6 runs failed this way. A due date is
+        # never earlier than the posting date, whichever clock produced it.
+        if str(pi.get("due_date") or "") < today:
+            pi["due_date"] = today
+        for row in pi.get("payment_schedule") or []:
+            if str(row.get("due_date") or "") < today:
+                row["due_date"] = today
         pi["update_stock"] = 0
         pi[IDEMPOTENCY_FIELD] = key
         for it in pi.get("items", []):

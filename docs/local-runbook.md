@@ -45,7 +45,8 @@ run.
 ## 1. Evidence version 3: the b6 / c6 / v6 benchmark (hours)
 
 This measures the false-commit fix (`bench/conditions.py`, version 3). It is
-the most important run left.
+the most important run left. The tags are b7 / c7 / v7: b6 / c6 / v6 were
+spoiled by a date defect (`docs/limitations.md`).
 
 First set the evidence-version-2 results aside. `bench.run` will not resume
 into a file recorded under different conditions, and `run_benchmark.sh` refuses
@@ -53,9 +54,9 @@ to start until this is done:
 
 ```powershell
 git restore results/benchmark_ids.json; Remove-Item -ErrorAction SilentlyContinue results/corpus_plan_b6.json
-gbash scripts/archive_results.sh evidence-v2-b5-c5-v5
-git commit -m "Archive evidence-version-2 results (b5, c5, v5) before the v3 runs"
-gbash scripts/run_benchmark.sh        # defaults are now b6 / c6 / v6; resumable
+gbash scripts/archive_results.sh evidence-v3-b6-c6-v6-due-date-defect
+git commit -m "Archive b6/c6/v6 (due-date defect) before the b7 runs"
+gbash scripts/run_benchmark.sh        # defaults are now b7 / c7 / v7; resumable
 ```
 
 Push the archive commit **together with the results** at the end, not before:
@@ -76,7 +77,7 @@ Then confirm the report is reproducible, and commit:
 
 ```powershell
 gbash scripts/reproduce.sh
-git add results docs/results.md docs/compounding_curve.svg; git commit -m "Record evidence-version-3 runs (b6, c6, v6)"; git push
+git add results docs/results.md docs/compounding_curve.svg; git commit -m "Record evidence-version-3 runs (b7, c7, v7)"; git push
 ```
 
 `results/calibration_curves.json` now also records `post_ece_ci_low`,

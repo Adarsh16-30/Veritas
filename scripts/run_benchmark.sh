@@ -29,11 +29,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 SEED="${VERITAS_SEED:-7}"
-# b1-b5, c5, v1-v5 and l1 are used on the development store; b6/c6/v6 are the
-# evidence-version-3 runs (bench/conditions.py).
-BASE_TAG="${VERITAS_BASELINE_TAG:-b6}"
-VER_TAG="${VERITAS_VERIFIED_TAG:-v6}"
-CAL_TAG="${VERITAS_CAL_TAG:-c6}"
+# b1-b6, c5-c6, v1-v6 and l1 are used on the development store. b6/c6/v6 were
+# spoiled by the invoice due-date defect (docs/limitations.md); b7/c7/v7 are the
+# evidence-version-3 runs.
+BASE_TAG="${VERITAS_BASELINE_TAG:-b7}"
+VER_TAG="${VERITAS_VERIFIED_TAG:-v7}"
+CAL_TAG="${VERITAS_CAL_TAG:-c7}"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 

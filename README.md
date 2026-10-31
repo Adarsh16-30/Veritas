@@ -49,7 +49,7 @@ Every number this project reports comes from a results file and is cited in
 [`docs/results.md`](docs/results.md); the chart above is drawn from those files,
 and nothing else on this page is a measurement. `main` is now evidence version 3
 (`bench/conditions.py`): the recorded runs are version 2, and the next runs are
-b6 / c6 / v6.
+b7 / c7 / v7 (b6 / c6 / v6 hit a date defect; see `docs/limitations.md`).
 
 ## Quick start
 

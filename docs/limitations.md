@@ -727,3 +727,29 @@ Measured on b5 / c5 / v5 / l1 (evidence version 2); `docs/results.md` has the nu
   verdicts move with the executor's more than an independent check ideally would.
   Its disagreement rate on known-wrong steps is 34%.
 - **No demo video.** `scripts/run_demo.sh` exists; the recording does not.
+
+### b6 / c6 / v6 measured a date defect, not the agent (2026-10-31)
+
+All 44 workflows escalated in **both** configurations, including all 8 clean
+controls. That is an agent that stops everything, not a detector, so none of
+those numbers says anything about evidence version 3.
+
+**Cause.** Every clean invoice at S4 was refused by ERPNext: "Due Date cannot
+be before Posting / Supplier Invoice Date". The agent dated the invoice from the
+laptop's clock (UTC+5:30), while ERPNext's purchase-order mapper set the due date
+from its own clock (UTC). The runs were at 00:16-02:26 local, when the two
+disagree about the date. The executor had proceeded on attempt 1 and, told on
+attempt 2 that the previous attempt was rejected, held. The calibration run c6
+hit the same failure, so the router was fitted on it (`qhat` 0.92 against 0.59
+for c5) and escalated almost everything at S1 in v6. Diagnosed from the traces
+with `scripts/explain_decisions.py`.
+
+**Fix.** `ERPClient.purchase_invoice_doc` never lets a due date fall before the
+posting date, whichever clock produced it (unit-tested). Nothing the models see
+changes, so the evidence version stays 3. The b6/c6/v6 files are kept under
+`results/archive/evidence-v3-b6-c6-v6-due-date-defect/` (Rule 10). The
+measurement runs are b7/c7/v7.
+
+**What the defect did not spoil.** The ledger reconciled with 0 bad postings.
+On c6, coverage was 0.952 (target ≥ 0.9), and ECE 0.116 against a noise floor of
+0.031: real miscalibration, but fitted on defective data.

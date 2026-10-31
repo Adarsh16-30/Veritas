@@ -473,3 +473,24 @@ def test_an_unreachable_ollama_is_an_outage_when_choosing_a_verifier(
     monkeypatch.setattr("verify.gate.requests.get", refused)
     with pytest.raises(ModelUnavailable):
         select_verifier_model("llama3:8b", url="http://127.0.0.1:1")
+
+
+def test_invoice_due_dates_never_precede_the_posting_date() -> None:
+    """b6/c6/v6: the agent's date ran a day ahead of the ERPNext server's, the
+    mapped due date fell before the posting date, and every clean S4 failed."""
+
+    class Mapper(ERPClient):
+        def __init__(self) -> None:  # noqa: D107
+            pass
+
+        def call(self, *_: Any, **__: Any) -> dict[str, Any]:
+            return {
+                "due_date": "2026-10-30",
+                "payment_schedule": [{"due_date": "2026-10-30"}, {"due_date": "2026-11-29"}],
+                "items": [],
+            }
+
+    pi = Mapper().purchase_invoice_doc("PO-1", "B-1", "2026-10-31", "k")
+    assert pi["posting_date"] == pi["bill_date"] == "2026-10-31"
+    assert pi["due_date"] == "2026-10-31"
+    assert [r["due_date"] for r in pi["payment_schedule"]] == ["2026-10-31", "2026-11-29"]
