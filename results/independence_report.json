@@ -1,0 +1,19 @@
+{
+  "commit": "d049ef00f09b7f89b3fd84be606dc46857d0df55",
+  "distinct_model_family": true,
+  "ev_corr": 0.5147770906064459,
+  "ev_corr_available": true,
+  "ev_corr_n": 515,
+  "ev_corr_undefined_reason": null,
+  "generated_at": "2026-10-31T12:35:34+00:00",
+  "model_pairs": [
+    "llama3 -> qwen2.5-coder"
+  ],
+  "overall_agreement_rate": 0.8836,
+  "paired_steps": 1237,
+  "payload_leaks": [],
+  "verifier_caught_count": 117,
+  "verifier_disagreement_n": 378,
+  "verifier_disagreement_on_known_wrong": 0.30952380952380953,
+  "verifier_payload_clean": true
+}
